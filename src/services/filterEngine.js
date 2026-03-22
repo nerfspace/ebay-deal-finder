@@ -21,8 +21,8 @@ const EXCLUDED_CONDITIONS = ['used - poor', 'poor', 'for parts or not working'];
 
 class FilterEngine {
   constructor(options = {}) {
-    this.minDealScore = options.minDealScore || 85;
-    this.minProfitThreshold = options.minProfitThreshold || 50;
+   this.minDealScore = options.minDealScore || 65;
+this.minProfitThreshold = options.minProfitThreshold || 15;
     this.minSellerFeedbackPct = options.minSellerFeedbackPct || 95;
     this.binOnly = options.binOnly !== false;
     this.excludeKeywords = new Set(DEFAULT_EXCLUDE_KEYWORDS);
