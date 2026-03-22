@@ -1,5 +1,6 @@
 'use strict';
 
+const express = require('express');
 const config = require('./config/config');
 const logger = require('./utils/logger');
 const { initDb, closeDb } = require('./database/db');
@@ -14,6 +15,7 @@ const EbayService = require('./services/ebayService');
 const { scoreItem } = require('./services/scoringEngine');
 const FilterEngine = require('./services/filterEngine');
 const NotificationService = require('./services/notificationService');
+const ebayWebhookRouter = require('./routes/ebayWebhook');
 
 logger.setLevel(config.logging.level);
 
@@ -22,6 +24,18 @@ const notificationService = new NotificationService(config);
 const filterEngine = new FilterEngine({
   minDealScore: config.deals.minDealScore,
   minProfitThreshold: config.deals.minProfitThreshold,
+});
+
+// Create Express app
+const app = express();
+app.use(express.json());
+
+// Register webhook routes
+app.use('/ebay', ebayWebhookRouter);
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 /**
@@ -119,6 +133,13 @@ async function main() {
   logger.info(`Min profit threshold: $${config.deals.minProfitThreshold}`);
 
   await initDb(config.database.path);
+
+  // Start Express server
+  const PORT = process.env.PORT || 3000;
+  app.listen(PORT, () => {
+    logger.info(`[SERVER] Listening on port ${PORT}`);
+    logger.info(`[WEBHOOK] Ready to receive eBay notifications at /ebay/notification`);
+  });
 
   // Run initial scan immediately
   await runScan();
