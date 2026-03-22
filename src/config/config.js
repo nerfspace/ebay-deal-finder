@@ -30,8 +30,15 @@ const config = {
     webhookUrl: process.env.DISCORD_WEBHOOK_URL,
   },
   deals: {
-    minProfitThreshold: parseFloat(process.env.MIN_PROFIT_THRESHOLD || '20'),
-    minDealScore: 75,
+    minProfitThreshold: parseFloat(process.env.MIN_PROFIT_THRESHOLD || '50'),
+    minDealScore: parseInt(process.env.MIN_DEAL_SCORE || '85', 10),
+    minSellerFeedbackPct: parseFloat(process.env.MIN_SELLER_FEEDBACK_PCT || '95'),
+    maxDealsPerScan: parseInt(process.env.MAX_DEALS_PER_SCAN || '20', 10),
+    binOnly: process.env.BIN_ONLY !== 'false',
+  },
+  notifications: {
+    delayMs: parseInt(process.env.NOTIFICATION_DELAY_MS || '1500', 10),
+    maxRetries: parseInt(process.env.NOTIFICATION_MAX_RETRIES || '3', 10),
   },
   database: {
     path: process.env.DATABASE_PATH || './data/deals.db',

@@ -1,16 +1,7 @@
 'use strict';
 
 const logger = require('../utils/logger');
-
-/**
- * Default include keywords — titles containing any of these phrases are
- * more likely to be genuinely underpriced deals worth investigating.
- */
-const DEFAULT_INCLUDE_KEYWORDS = [
-  'lot', 'bundle', 'liquidation', 'wholesale', 'clearance',
-  'estate sale', 'moving sale', 'must sell', 'quick sale',
-  'no reserve', 'starting at $1', 'urgent', 'reduced',
-];
+const { getHighValueMultiplier } = require('./scoringEngine');
 
 /**
  * Default exclude keywords — titles containing any of these are almost
@@ -20,13 +11,20 @@ const DEFAULT_EXCLUDE_KEYWORDS = [
   'for parts', 'not working', 'broken', 'damaged', 'cracked',
   'replica', 'fake', 'inspired', 'digital', 'pdf', 'download',
   'warranty card', 'box only', 'empty box',
+  'used - poor', 'poor condition',
 ];
+
+/**
+ * Conditions that are explicitly excluded from consideration.
+ */
+const EXCLUDED_CONDITIONS = ['used - poor', 'poor', 'for parts or not working'];
 
 class FilterEngine {
   constructor(options = {}) {
-    this.minDealScore = options.minDealScore || 75;
-    this.minProfitThreshold = options.minProfitThreshold || 20;
-    this.includeKeywords = new Set(DEFAULT_INCLUDE_KEYWORDS);
+    this.minDealScore = options.minDealScore || 85;
+    this.minProfitThreshold = options.minProfitThreshold || 50;
+    this.minSellerFeedbackPct = options.minSellerFeedbackPct || 95;
+    this.binOnly = options.binOnly !== false;
     this.excludeKeywords = new Set(DEFAULT_EXCLUDE_KEYWORDS);
   }
 
@@ -36,15 +34,12 @@ class FilterEngine {
   loadKeywords(dbKeywords = []) {
     for (const kw of dbKeywords) {
       const word = kw.keyword.toLowerCase();
-      if (kw.filter_type === 'include') {
-        this.includeKeywords.add(word);
-      } else if (kw.filter_type === 'exclude') {
+      if (kw.filter_type === 'exclude') {
         this.excludeKeywords.add(word);
       }
     }
     logger.debug(
-      `Filter engine loaded: ${this.includeKeywords.size} include, ` +
-      `${this.excludeKeywords.size} exclude keywords`,
+      `Filter engine loaded: ${this.excludeKeywords.size} exclude keywords`,
     );
   }
 
@@ -61,29 +56,48 @@ class FilterEngine {
   }
 
   /**
-   * Check whether a listing title matches any include keyword (optional boost).
-   * Returns true if there's a positive keyword match.
+   * Check whether an item belongs to a high-value category.
+   * Returns true if the item's liquidity multiplier exceeds 1.0.
    */
-  hasIncludeKeyword(title) {
-    const lower = title.toLowerCase();
-    for (const kw of this.includeKeywords) {
-      if (lower.includes(kw)) return true;
-    }
-    return false;
+  isHighValueCategory(item) {
+    return getHighValueMultiplier(item) > 1.0;
   }
 
   /**
    * Filter a batch of scored items, returning only those that pass all criteria.
+   * Results are sorted by dealScore descending and capped at maxDeals.
    */
-  filterDeals(scoredItems) {
+  filterDeals(scoredItems, maxDeals = 20) {
     const passing = [];
 
     for (const item of scoredItems) {
-      // Must meet minimum deal score threshold
-      if (item.dealScore < this.minDealScore) continue;
+      // BIN-only filter: skip auctions when enabled
+      if (this.binOnly) {
+        const lt = (item.listingType || '').toUpperCase();
+        if (lt === 'AUCTION') {
+          logger.debug(`Skipped auction listing: "${item.title}"`);
+          continue;
+        }
+      }
 
-      // Must meet minimum profit threshold
-      if (item.expectedProfit < this.minProfitThreshold) continue;
+      // Exclude "used - poor" and similar conditions
+      const cond = (item.condition || '').toLowerCase();
+      if (EXCLUDED_CONDITIONS.some((c) => cond.includes(c))) {
+        logger.debug(`Excluded poor condition: "${item.title}"`);
+        continue;
+      }
+
+      // Minimum seller feedback percentage
+      if (item.sellerFeedbackPct != null && item.sellerFeedbackPct < this.minSellerFeedbackPct) {
+        logger.debug(`Excluded low seller feedback (${item.sellerFeedbackPct}%): "${item.title}"`);
+        continue;
+      }
+
+      // Must belong to a high-value category
+      if (!this.isHighValueCategory(item)) {
+        logger.debug(`Excluded non-high-value category: "${item.title}"`);
+        continue;
+      }
 
       // Must not match any exclude keyword
       if (this.isExcluded(item.title)) {
@@ -91,12 +105,23 @@ class FilterEngine {
         continue;
       }
 
+      // Must meet minimum deal score threshold
+      if (item.dealScore < this.minDealScore) continue;
+
+      // Must meet minimum profit threshold
+      if (item.expectedProfit < this.minProfitThreshold) continue;
+
       passing.push(item);
     }
 
-    logger.debug(`Filter: ${scoredItems.length} items → ${passing.length} deals passed`);
-    return passing;
+    // Sort by deal score descending and cap at maxDeals
+    passing.sort((a, b) => b.dealScore - a.dealScore);
+    const topDeals = passing.slice(0, maxDeals);
+
+    logger.debug(`Filter: ${scoredItems.length} items → ${passing.length} passed → top ${topDeals.length} selected`);
+    return topDeals;
   }
 }
 
 module.exports = FilterEngine;
+
