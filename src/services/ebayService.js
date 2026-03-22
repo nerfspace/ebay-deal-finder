@@ -112,6 +112,41 @@ const response = await axios.get(`${this.baseUrl}/item_summary/search`, {
       postedAt: item.itemCreationDate || null,
     };
   }
-}
+  /**
+   * Search for recently sold items matching a query.
+   * Returns true if matches found, false if none.
+   */
+  async checkSoldItems(title, limit = 5) {
+    try {
+      logger.debug(`Checking sold items for: "${title.substring(0, 50)}"`);
+      
+      // Use eBay Buy API sold items endpoint
+      const response = await axios.get(`${this.baseUrl}/item_summary/search`, {
+        headers: this._headers(),
+        params: {
+          q: title,  // Search by exact title
+          sort: 'newlyListed',
+          limit,
+          filter: 'buyingOptions:{SOLD}',  // Only sold items
+        },
+        timeout: 10000,
+      });
+
+      const { itemSummaries = [] } = response.data;
+      const hasSoldItems = itemSummaries.length > 0;
+      
+      if (hasSoldItems) {
+        logger.debug(`✅ Found ${itemSummaries.length} sold items for: "${title.substring(0, 50)}"`);
+      } else {
+        logger.debug(`❌ No sold items found for: "${title.substring(0, 50)}"`);
+      }
+      
+      return hasSoldItems;
+    } catch (err) {
+      logger.warn(`Error checking sold items: ${err.message}`);
+      // Default to true (don't reject) if API fails
+      return true;
+    }
+  }
 
 module.exports = EbayService;
