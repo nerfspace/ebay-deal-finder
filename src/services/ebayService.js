@@ -39,12 +39,17 @@ class EbayService {
         logger.debug(`Fetching eBay listings: offset=${offset}, limit=${limit}`);
         
         const filter = `price:[${this.minPrice}..${this.maxPrice}],priceCurrency:USD,condition:{${this.condition}},buyingOptions:{FIXED_PRICE}`;
-        
-        const response = await axios.get(`${this.baseUrl}/item_summary/search`, {
-          headers: this._headers(),
-          params: {
-            q: '*',
-            sort: 'newlyListed',
+
+// Use multiple narrow searches instead of wildcard
+const searchTerms = ['tools', 'vintage', 'collectible', 'audio', 'camera', 'game'];
+const q = searchTerms[Math.floor(Math.random() * searchTerms.length)];
+logger.info(`[EBAY] Searching for: "${q}"`);
+
+const response = await axios.get(`${this.baseUrl}/item_summary/search`, {
+  headers: this._headers(),
+  params: {
+    q: q,  // Use random search term instead of wildcard
+    sort: 'newlyListed',
             limit,
             offset,
             fieldgroups: 'MATCHING_ITEMS',
