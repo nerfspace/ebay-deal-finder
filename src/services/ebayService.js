@@ -39,16 +39,14 @@ class EbayService {
   }
 
   /**
-   * Fetch up to `total` recent listings using the eBay Browse API search endpoint.
-   * The API supports a maximum of 200 items per request, so we paginate as needed.
+   * Fetch up to `total` most recent NEW listings across ALL categories.
+   * Uses wildcard search to get newest items, then filters through deal engine.
    */
   async fetchRecentListings(total = 500) {
     const listings = [];
     let offset = 0;
-    
-    // Get current keyword
-    const keyword = this._getNextKeyword();
-    logger.info(`[EBAY] Searching for keyword: "${keyword}"`);
+
+    logger.info(`[EBAY] Fetching ${total} most recent NEW listings...`);
 
     while (listings.length < total) {
       const limit = Math.min(this.pageSize, total - listings.length);
@@ -56,21 +54,48 @@ class EbayService {
       try {
         logger.debug(`Fetching eBay listings: offset=${offset}, limit=${limit}`);
         
-        // Build filter string for price range and condition
-        const filter = `price:[${this.minPrice}..${this.maxPrice}],priceCurrency:USD,condition:{${this.condition}},buyingOptions:{FIXED_PRICE}`;
+        // Build filter: NEW + FIXED_PRICE only, no keyword restrictions
+        const filter = `price:[${this.minPrice}..${this.maxPrice}],priceCurrency:USD,condition:{NEW},buyingOptions:{FIXED_PRICE}`;
         
         const response = await axios.get(`${this.baseUrl}/item_summary/search`, {
           headers: this._headers(),
           params: {
-            q: keyword,  // Use specific keyword instead of wildcard
-            sort: 'newlyListed',
+            q: '*',  // WILDCARD - search all items
+            sort: 'newlyListed',  // Sort by newest
             limit,
             offset,
             fieldgroups: 'MATCHING_ITEMS',
-            filter: filter,  // Add price and condition filters
+            filter: filter,
           },
           timeout: 15000,
         });
+
+        const { itemSummaries = [], total: apiTotal = 0 } = response.data;
+
+        if (itemSummaries.length === 0) {
+          logger.debug('No more listings returned by eBay API.');
+          break;
+        }
+
+        listings.push(...itemSummaries.map(this._normalizeItem.bind(this)));
+        offset += itemSummaries.length;
+
+        if (offset >= apiTotal || listings.length >= total) {
+          break;
+        }
+      } catch (err) {
+        const status = err.response ? err.response.status : 'N/A';
+        const message = err.response
+          ? JSON.stringify(err.response.data)
+          : err.message;
+        logger.error(`eBay API request failed (status ${status}): ${message}`);
+        throw err;
+      }
+    }
+
+    logger.debug(`Fetched ${listings.length} NEW listings from eBay.`);
+    return listings;
+  }
 
         const { itemSummaries = [], total: apiTotal = 0 } = response.data;
 
