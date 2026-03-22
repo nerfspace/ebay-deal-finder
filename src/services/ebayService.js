@@ -11,14 +11,11 @@ class EbayService {
     this.authToken = config.ebay.authToken;
     this.sandbox = config.ebay.sandbox;
     this.baseUrl = config.ebay.sandbox ? SANDBOX_API_BASE : BROWSE_API_BASE;
-    this.pageSize = 200; // Maximum allowed by eBay Browse API per request
-    
-    // Store search configuration
-    this.keywords = config.scan.keywords || ['laptop'];
-    this.condition = config.scan.condition || 'USED';
-    this.minPrice = config.scan.minPrice || 20;
-    this.maxPrice = config.scan.maxPrice || 2000;
-    this.currentKeywordIndex = 0;
+    this.pageSize = 200;
+    this.keywords = config.scan.keywords || [];
+    this.condition = config.scan.condition || 'NEW';
+    this.minPrice = config.scan.minPrice || 10;
+    this.maxPrice = config.scan.maxPrice || 5000;
   }
 
   _headers() {
@@ -29,19 +26,6 @@ class EbayService {
     };
   }
 
-  /**
-   * Get the next keyword in rotation
-   */
-  _getNextKeyword() {
-    const keyword = this.keywords[this.currentKeywordIndex];
-    this.currentKeywordIndex = (this.currentKeywordIndex + 1) % this.keywords.length;
-    return keyword;
-  }
-
-  /**
-   * Fetch up to `total` most recent NEW listings across ALL categories.
-   * Uses wildcard search to get newest items, then filters through deal engine.
-   */
   async fetchRecentListings(total = 500) {
     const listings = [];
     let offset = 0;
@@ -54,14 +38,13 @@ class EbayService {
       try {
         logger.debug(`Fetching eBay listings: offset=${offset}, limit=${limit}`);
         
-        // Build filter: NEW + FIXED_PRICE only, no keyword restrictions
-        const filter = `price:[${this.minPrice}..${this.maxPrice}],priceCurrency:USD,condition:{NEW},buyingOptions:{FIXED_PRICE}`;
+        const filter = `price:[${this.minPrice}..${this.maxPrice}],priceCurrency:USD,condition:{${this.condition}},buyingOptions:{FIXED_PRICE}`;
         
         const response = await axios.get(`${this.baseUrl}/item_summary/search`, {
           headers: this._headers(),
           params: {
-            q: '*',  // WILDCARD - search all items
-            sort: 'newlyListed',  // Sort by newest
+            q: '*',
+            sort: 'newlyListed',
             limit,
             offset,
             fieldgroups: 'MATCHING_ITEMS',
@@ -70,7 +53,8 @@ class EbayService {
           timeout: 15000,
         });
 
-        const { itemSummaries = [], total: apiTotal = 0 } = response.data;
+        const itemSummaries = response.data.itemSummaries || [];
+        const apiTotal = response.data.total || 0;
 
         if (itemSummaries.length === 0) {
           logger.debug('No more listings returned by eBay API.');
@@ -97,49 +81,14 @@ class EbayService {
     return listings;
   }
 
-        const { itemSummaries = [], total: apiTotal = 0 } = response.data;
-
-        if (itemSummaries.length === 0) {
-          logger.debug('No more listings returned by eBay API.');
-          break;
-        }
-
-        listings.push(...itemSummaries.map(this._normalizeItem.bind(this)));
-        offset += itemSummaries.length;
-
-        if (offset >= apiTotal || listings.length >= total) {
-          break;
-        }
-      } catch (err) {
-        const status = err.response ? err.response.status : 'N/A';
-        const message = err.response
-          ? JSON.stringify(err.response.data)
-          : err.message;
-        logger.error(`eBay API request failed (status ${status}): ${message}`);
-        throw err;
-      }
-    }
-
-    logger.debug(`Fetched ${listings.length} listings from eBay for keyword "${keyword}".`);
-    return listings;
-  }
-
-  /**
-   * Normalize a raw eBay API item summary into a consistent internal format.
-   */
   _normalizeItem(item) {
-    const price =
-      item.price ? parseFloat(item.price.value) : 0;
-
-    const sellerFeedback =
-      item.seller && item.seller.feedbackScore
-        ? parseInt(item.seller.feedbackScore, 10)
-        : null;
-
-    const sellerFeedbackPct =
-      item.seller && item.seller.feedbackPercentage
-        ? parseFloat(item.seller.feedbackPercentage)
-        : null;
+    const price = item.price ? parseFloat(item.price.value) : 0;
+    const sellerFeedback = item.seller && item.seller.feedbackScore
+      ? parseInt(item.seller.feedbackScore, 10)
+      : null;
+    const sellerFeedbackPct = item.seller && item.seller.feedbackPercentage
+      ? parseFloat(item.seller.feedbackPercentage)
+      : null;
 
     return {
       ebayItemId: item.itemId,
