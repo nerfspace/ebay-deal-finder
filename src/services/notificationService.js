@@ -11,12 +11,22 @@ class NotificationService {
     this.isProcessing = false;
     this.maxRetries = 3;
     this.lastSendTime = 0;
-    this.minGapMs = 5000; // 5 second minimum between sends
+    this.minGapMs = 15000; // 15 second minimum between sends
+    this.sentDealIds = new Set(); // Track sent deals to avoid duplicates
   }
 
-  async queueNotification(title, body, url = null) {
+  async queueNotification(title, body, url = null, dealId = null) {
     if (!this.enabled) return false;
+    
+    // Don't queue if we've already sent this deal
+    if (dealId && this.sentDealIds.has(dealId)) {
+      logger.debug(`Skipping duplicate deal notification: ${dealId}`);
+      return false;
+    }
+    
+    if (dealId) this.sentDealIds.add(dealId);
     this.queue.push({ title, body, url });
+    
     if (!this.isProcessing) {
       this.processQueue();
     }
@@ -60,23 +70,22 @@ class NotificationService {
       logger.info(`Sending batch to Discord: ${notifications.length} deals...`);
       await axios.post(this.webhookUrl, { embeds }, { timeout: 10000 });
       this.lastSendTime = Date.now();
-      logger.info(`✅ Discord batch sent: ${notifications.length} deals in 1 message`);
+      logger.info(`✅ Discord batch sent successfully!`);
       return true;
     } catch (err) {
       const status = err.response?.status;
-      const retryAfter = err.response?.data?.retry_after;
 
       if (status === 429 && attempt <= this.maxRetries) {
-        // Exponential backoff: 60s, 120s, 180s
-        const backoffMs = (Math.pow(2, attempt - 1) * 60) * 1000;
-        logger.warn(`Discord rate-limited (429). Backing off ${backoffMs}ms... (attempt ${attempt}/${this.maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, backoffMs));
+        // Wait with increasing backoff
+        const waitMs = 60000 * attempt; // 60s, 120s, 180s
+        logger.warn(`Discord rate-limited (429). Waiting ${waitMs}ms... (attempt ${attempt}/${this.maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, waitMs));
         return this.sendBatchMessage(notifications, attempt + 1);
       } else if (status === 429) {
-        logger.error(`Discord rate-limited after ${this.maxRetries} retries. Failed to send ${notifications.length} deals.`);
+        logger.error(`❌ Discord rate-limited after ${this.maxRetries} retries. Giving up on ${notifications.length} deals.`);
         return false;
       } else {
-        logger.error(`Failed to send Discord notification (${status}): ${err.message}`);
+        logger.error(`❌ Failed to send Discord notification (${status}): ${err.message}`);
         return false;
       }
     }
@@ -84,8 +93,8 @@ class NotificationService {
 
   async notifyDeal(deal) {
     const title = `🔥 ${deal.title.substring(0, 60)}`;
-    const body = `💰 Price: $${deal.currentPrice.toFixed(2)}\n📈 Est. Value: $${(deal.currentPrice * 1.5).toFixed(2)}\n✅ Profit: ~$${deal.expectedProfit?.toFixed(2) || 'N/A'}`;
-    return this.queueNotification(title, body, deal.url);
+    const body = `💰 Price: $${deal.currentPrice.toFixed(2)}\n📈 Profit: ~$${deal.expectedProfit?.toFixed(2) || 'N/A'}\n🔗 [Buy Now](${deal.url})`;
+    return this.queueNotification(title, body, deal.url, deal.ebayItemId);
   }
 }
 
