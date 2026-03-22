@@ -10,6 +10,8 @@ class NotificationService {
     this.queue = [];
     this.isProcessing = false;
     this.maxRetries = 3;
+    this.lastSendTime = 0;
+    this.minGapMs = 5000; // 5 second minimum between sends
   }
 
   async queueNotification(title, body, url = null) {
@@ -24,6 +26,14 @@ class NotificationService {
   async processQueue() {
     if (this.isProcessing || this.queue.length === 0) return;
     this.isProcessing = true;
+
+    // Wait before sending to avoid rate limits
+    const timeSinceLastSend = Date.now() - this.lastSendTime;
+    if (timeSinceLastSend < this.minGapMs) {
+      const waitTime = this.minGapMs - timeSinceLastSend;
+      logger.debug(`Waiting ${waitTime}ms before sending to avoid rate limit...`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
 
     // Batch all queued notifications into a single message
     const allNotifications = [...this.queue];
@@ -47,20 +57,26 @@ class NotificationService {
         ...(notif.url && { url: notif.url }),
       }));
 
+      logger.info(`Sending batch to Discord: ${notifications.length} deals...`);
       await axios.post(this.webhookUrl, { embeds }, { timeout: 10000 });
-      logger.info(`Discord batch sent: ${notifications.length} deals in 1 message`);
+      this.lastSendTime = Date.now();
+      logger.info(`✅ Discord batch sent: ${notifications.length} deals in 1 message`);
       return true;
     } catch (err) {
-      if (err.response?.status === 429 && attempt <= this.maxRetries) {
-        const retryAfter = Math.ceil((err.response?.data?.retry_after || 60) * 1000);
-        logger.warn(`Discord rate-limited (429). Retrying in ${retryAfter}ms... (attempt ${attempt}/${this.maxRetries})`);
-        await new Promise(resolve => setTimeout(resolve, retryAfter));
+      const status = err.response?.status;
+      const retryAfter = err.response?.data?.retry_after;
+
+      if (status === 429 && attempt <= this.maxRetries) {
+        // Exponential backoff: 60s, 120s, 180s
+        const backoffMs = (Math.pow(2, attempt - 1) * 60) * 1000;
+        logger.warn(`Discord rate-limited (429). Backing off ${backoffMs}ms... (attempt ${attempt}/${this.maxRetries})`);
+        await new Promise(resolve => setTimeout(resolve, backoffMs));
         return this.sendBatchMessage(notifications, attempt + 1);
-      } else if (err.response?.status === 429) {
+      } else if (status === 429) {
         logger.error(`Discord rate-limited after ${this.maxRetries} retries. Failed to send ${notifications.length} deals.`);
         return false;
       } else {
-        logger.error(`Failed to send Discord notification: ${err.message}`);
+        logger.error(`Failed to send Discord notification (${status}): ${err.message}`);
         return false;
       }
     }
