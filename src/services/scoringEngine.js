@@ -1,144 +1,216 @@
 'use strict';
 
 /**
- * Deal Scoring Engine — 5 layers
+ * Deal Scoring Engine — 6 layers
  *
- * 1. Value Score      — How far below estimated resale price is the listing?
- * 2. Confidence Score — How reliable is the data and seller?
- * 3. Speed Score      — How recently was the listing posted?
- * 4. Risk Score       — How risky is the deal (inverted — lower risk = higher score)?
- * 5. Execution Score  — How easy is it to buy and resell?
- *
- * Final deal score = weighted average of all 5 layers (0–100).
+ * Deal Score =
+ *   (Price Discount Score  * 0.35)
+ * + (Liquidity Score       * 0.20)
+ * + (Seller Score          * 0.15)
+ * + (Listing Quality Score * 0.15)
+ * + (Speed Score           * 0.15)
+ * - (Risk Score            * 0.20)
  */
 
 const WEIGHTS = {
-  value: 0.35,
-  confidence: 0.25,
-  speed: 0.15,
-  risk: 0.15,
-  execution: 0.10,
+  priceDiscount: 0.35,
+  liquidity:     0.20,
+  seller:        0.15,
+  listingQuality: 0.15,
+  speed:         0.15,
+  risk:          0.20, // subtracted
 };
 
-// Price thresholds for scoring adjustments
-const PRICE_VERY_LOW = 5;
-const PRICE_LOW = 15;
-const PRICE_HIGH = 200;
+// Price thresholds
+const PRICE_VERY_LOW  = 5;
+const PRICE_LOW       = 15;
+const PRICE_HIGH      = 200;
 const PRICE_VERY_HIGH = 500;
-const PRICE_EXTREME = 1000;
+const PRICE_EXTREME   = 1000;
 
 // Seller feedback thresholds
 const FEEDBACK_EXCELLENT = 1000;
-const FEEDBACK_GREAT = 500;
-const FEEDBACK_GOOD = 100;
-const FEEDBACK_OK = 10;
-const FEEDBACK_POOR = 5;
+const FEEDBACK_GREAT     = 500;
+const FEEDBACK_GOOD      = 100;
+const FEEDBACK_OK        = 10;
+const FEEDBACK_POOR      = 5;
 
 // Seller positive feedback percentage thresholds
 const FEEDBACK_PCT_EXCELLENT = 99;
-const FEEDBACK_PCT_GREAT = 98;
-const FEEDBACK_PCT_GOOD = 95;
-const FEEDBACK_PCT_OK = 90;
-const FEEDBACK_PCT_POOR = 85;
+const FEEDBACK_PCT_GREAT     = 98;
+const FEEDBACK_PCT_GOOD      = 95;
+const FEEDBACK_PCT_OK        = 90;
+const FEEDBACK_PCT_POOR      = 85;
 const FEEDBACK_PCT_VERY_POOR = 80;
 
 /**
- * Estimate the resale value of an item based on heuristics.
- * In production this would call a pricing API or historical data.
- * Here we apply reasonable multipliers based on category and condition.
+ * High-value category patterns for liquidity scoring.
+ * Each entry is { patterns: string[], multiplier: number }.
+ * A higher multiplier means the category is more liquid / resellable.
+ */
+const HIGH_VALUE_CATEGORIES = [
+  { patterns: ['snap-on', 'mac tools', 'matco', 'snap on'],                                                        multiplier: 1.8 },
+  { patterns: ['griswold', 'wagner', 'cast iron', 'cast-iron'],                                                     multiplier: 1.7 },
+  { patterns: ['camera lens', 'camera lenses', 'dslr lens', 'mirrorless lens'],                                     multiplier: 1.6 },
+  { patterns: ['appliance part', 'model number', 'oem part', 'replacement part'],                                   multiplier: 1.5 },
+  { patterns: ['single stitch', 'vintage tee', 'vintage t-shirt', 'vintage shirt'],                                 multiplier: 1.6 },
+  { patterns: ['game controller', 'game accessory', 'video game accessory', 'gaming accessory'],                    multiplier: 1.5 },
+  { patterns: ['gold ring', 'silver ring', 'gold necklace', 'silver necklace', 'gold bracelet', '14k', '18k', '925 silver'], multiplier: 1.9 },
+  { patterns: ['mid-century', 'midcentury', 'vintage lamp', 'vintage light', 'mcm decor'],                         multiplier: 1.6 },
+  { patterns: ['milwaukee battery', 'dewalt battery', 'makita battery', 'power tool battery'],                     multiplier: 1.7 },
+  { patterns: ['board game', 'incomplete game', 'missing pieces'],                                                  multiplier: 1.4 },
+  { patterns: ['industrial', 'commercial equipment', 'restaurant equipment'],                                       multiplier: 1.5 },
+  { patterns: ['pioneer receiver', 'marantz', 'vintage receiver', 'vintage amplifier', 'vintage stereo'],          multiplier: 1.7 },
+  { patterns: ['golf iron', 'golf club', 'titleist', 'callaway iron', 'ping iron', 'taylormade iron'],             multiplier: 1.5 },
+  { patterns: ['oem ink', 'oem toner', 'genuine ink', 'genuine toner', 'printer ink', 'printer toner'],           multiplier: 1.6 },
+  { patterns: ['guitar', 'bass guitar', 'violin', 'trumpet', 'saxophone', 'instrument part', 'musical instrument'], multiplier: 1.7 },
+];
+
+/**
+ * Detect if an item belongs to a high-value category.
+ * Returns the multiplier (≥1.0) for that category, or 1.0 if none matches.
+ */
+function getHighValueMultiplier(item) {
+  const haystack = `${(item.title || '')} ${(item.categoryName || '')}`.toLowerCase();
+
+  for (const cat of HIGH_VALUE_CATEGORIES) {
+    for (const pat of cat.patterns) {
+      if (haystack.includes(pat)) {
+        return cat.multiplier;
+      }
+    }
+  }
+  return 1.0;
+}
+
+/**
+ * Estimate the resale value of an item.
+ * Uses condition, category multipliers, and high-value category bonuses.
  */
 function estimateResalePrice(item) {
-  const { currentPrice, condition, categoryName } = item;
+  const { currentPrice, condition } = item;
 
   if (!currentPrice || currentPrice <= 0) return 0;
 
-  // Base multiplier: new items tend to sell at near retail; used at a discount
+  // Base condition multiplier
   let multiplier = 1.4;
 
   const cond = (condition || '').toLowerCase();
-  if (cond.includes('new')) multiplier = 1.5;
-  else if (cond.includes('like new') || cond.includes('open box')) multiplier = 1.35;
+  if (cond.includes('new'))                                           multiplier = 1.5;
+  else if (cond.includes('like new') || cond.includes('open box'))   multiplier = 1.35;
   else if (cond.includes('excellent') || cond.includes('very good')) multiplier = 1.25;
-  else if (cond.includes('good')) multiplier = 1.15;
-  else if (cond.includes('acceptable') || cond.includes('fair')) multiplier = 1.05;
-  else if (cond.includes('refurbished')) multiplier = 1.2;
+  else if (cond.includes('good'))                                     multiplier = 1.15;
+  else if (cond.includes('acceptable') || cond.includes('fair'))     multiplier = 1.05;
+  else if (cond.includes('refurbished'))                              multiplier = 1.20;
 
-  // Category adjustments
-  const cat = (categoryName || '').toLowerCase();
-  if (cat.includes('electronics') || cat.includes('computer')) multiplier += 0.05;
-  else if (cat.includes('collectible') || cat.includes('antique')) multiplier += 0.1;
-  else if (cat.includes('clothing') || cat.includes('shoes')) multiplier -= 0.1;
+  // Scale the condition multiplier up proportionally to the category's liquidity
+  // premium, then add a flat bonus for highly-liquid categories.
+  // BASE_CONDITION_MULTIPLIER (1.4) is the neutral "used" baseline.
+  const BASE_CONDITION_MULTIPLIER = 1.4;
+  // FLAT_LIQUIDITY_BONUS weights the raw liquidity premium (hvMultiplier - 1.0).
+  const FLAT_LIQUIDITY_BONUS = 0.1;
+  const hvMultiplier = getHighValueMultiplier(item);
+  multiplier = multiplier * (hvMultiplier / BASE_CONDITION_MULTIPLIER) + (hvMultiplier - 1.0) * FLAT_LIQUIDITY_BONUS;
 
   return Math.round(currentPrice * multiplier * 100) / 100;
 }
 
 /**
- * Score how much value (profit potential) a listing represents.
- * Returns 0–100.
+ * Layer 1 — Price Discount Score (0–100).
+ * Measures how far below estimated resale price the listing is.
  */
-function calcValueScore(currentPrice, estimatedResalePrice, minProfit) {
-  if (!currentPrice || !estimatedResalePrice || estimatedResalePrice <= currentPrice) {
-    return 0;
-  }
+function calcPriceDiscountScore(currentPrice, estimatedResalePrice, minProfit) {
+  if (!currentPrice || !estimatedResalePrice || estimatedResalePrice <= currentPrice) return 0;
 
   const profit = estimatedResalePrice - currentPrice;
   const margin = (profit / estimatedResalePrice) * 100;
 
   if (profit < minProfit) return 0;
 
-  // Score increases with margin percentage (capped at 100)
-  // 20% margin → ~40 points, 40% → ~70, 60%+ → near 100
-  const score = Math.min(100, margin * 1.6);
-  return Math.round(score);
+  // 20 % margin → ~40 pts, 40 % → ~70 pts, 60 %+ → ~100 pts
+  return Math.round(Math.min(100, margin * 1.6));
 }
 
 /**
- * Score the confidence in the listing data and seller reliability.
- * Returns 0–100.
+ * Layer 2 — Liquidity Score (0–100).
+ * How easily can this item be resold? High-value categories score higher.
  */
-function calcConfidenceScore(item) {
+function calcLiquidityScore(item) {
+  const multiplier = getHighValueMultiplier(item);
+
+  // Multiplier range: 1.0 (generic) → 1.9 (jewelry). Map to 0–100.
+  // 1.0 → 20 pts, 1.4 → 60 pts, 1.9 → 100 pts
+  const score = ((multiplier - 1.0) / 0.9) * 80 + 20;
+  return Math.round(Math.min(100, score));
+}
+
+/**
+ * Layer 3 — Seller Score (0–100).
+ * Evaluates seller reliability based on feedback count and percentage.
+ */
+function calcSellerScore(item) {
   let score = 50; // baseline
 
-  // Seller feedback score bonus
   const feedback = item.sellerFeedback || 0;
-  if (feedback > FEEDBACK_EXCELLENT) score += 20;
-  else if (feedback > FEEDBACK_GREAT) score += 15;
-  else if (feedback > FEEDBACK_GOOD) score += 10;
-  else if (feedback > FEEDBACK_OK) score += 5;
-  else if (feedback < FEEDBACK_POOR) score -= 20;
+  if (feedback > FEEDBACK_EXCELLENT)      score += 20;
+  else if (feedback > FEEDBACK_GREAT)     score += 15;
+  else if (feedback > FEEDBACK_GOOD)      score += 10;
+  else if (feedback > FEEDBACK_OK)        score += 5;
+  else if (feedback < FEEDBACK_POOR)      score -= 20;
 
-  // Seller positive feedback percentage
   const pct = item.sellerFeedbackPct || 0;
-  if (pct >= FEEDBACK_PCT_EXCELLENT) score += 20;
-  else if (pct >= FEEDBACK_PCT_GREAT) score += 15;
-  else if (pct >= FEEDBACK_PCT_GOOD) score += 10;
-  else if (pct >= FEEDBACK_PCT_OK) score += 5;
-  else if (pct < FEEDBACK_PCT_POOR) score -= 15;
-  else if (pct < FEEDBACK_PCT_VERY_POOR) score -= 25;
-
-  // Fixed-price listings are more reliable than auctions
-  if (item.listingType === 'FIXED_PRICE' || item.listingType === 'BUY_IT_NOW') {
-    score += 10;
-  }
+  if (pct >= FEEDBACK_PCT_EXCELLENT)      score += 20;
+  else if (pct >= FEEDBACK_PCT_GREAT)     score += 15;
+  else if (pct >= FEEDBACK_PCT_GOOD)      score += 10;
+  else if (pct >= FEEDBACK_PCT_OK)        score += 5;
+  else if (pct < FEEDBACK_PCT_VERY_POOR)  score -= 25;
+  else if (pct < FEEDBACK_PCT_POOR)       score -= 15;
 
   return Math.max(0, Math.min(100, score));
 }
 
 /**
- * Score how recently the listing was posted (time-sensitive deals).
- * Returns 0–100.
+ * Layer 4 — Listing Quality Score (0–100).
+ * BIN listings, good condition, reasonable price range all contribute.
+ */
+function calcListingQualityScore(item) {
+  let score = 50; // baseline
+
+  // BIN listings are higher quality (actionable immediately)
+  if (item.listingType === 'FIXED_PRICE' || item.listingType === 'BUY_IT_NOW') {
+    score += 20;
+  } else if (item.listingType === 'AUCTION') {
+    score -= 15;
+  }
+
+  // Condition bonuses
+  const cond = (item.condition || '').toLowerCase();
+  if (cond.includes('new'))                                           score += 15;
+  else if (cond.includes('like new') || cond.includes('open box'))   score += 10;
+  else if (cond.includes('excellent') || cond.includes('very good')) score += 8;
+  else if (cond.includes('good'))                                     score += 4;
+  else if (cond.includes('poor') || cond.includes('for parts'))      score -= 20;
+
+  // Price range quality
+  if (item.currentPrice < PRICE_VERY_LOW)   score -= 20;
+  else if (item.currentPrice < PRICE_LOW)   score -= 10;
+
+  return Math.max(0, Math.min(100, score));
+}
+
+/**
+ * Layer 5 — Speed Score (0–100).
+ * How recently was the listing posted?
  */
 function calcSpeedScore(item) {
   if (!item.postedAt) return 50;
 
-  const now = Date.now();
-  const postedMs = new Date(item.postedAt).getTime();
-  const ageMinutes = (now - postedMs) / 60000;
+  const ageMinutes = (Date.now() - new Date(item.postedAt).getTime()) / 60000;
 
-  if (ageMinutes < 5) return 100;
-  if (ageMinutes < 15) return 90;
-  if (ageMinutes < 30) return 80;
-  if (ageMinutes < 60) return 70;
+  if (ageMinutes < 5)   return 100;
+  if (ageMinutes < 15)  return 90;
+  if (ageMinutes < 30)  return 80;
+  if (ageMinutes < 60)  return 70;
   if (ageMinutes < 120) return 55;
   if (ageMinutes < 240) return 40;
   if (ageMinutes < 480) return 25;
@@ -146,88 +218,68 @@ function calcSpeedScore(item) {
 }
 
 /**
- * Score the risk level of the deal (inverted — low risk → high score).
- * Returns 0–100.
+ * Layer 6 — Risk Score (0–100, subtracted in final formula).
+ * Higher value means more risk; subtracted from the deal score.
  */
 function calcRiskScore(item) {
-  let score = 70; // baseline moderate-low risk
+  let score = 30; // baseline moderate-low risk
 
   const cond = (item.condition || '').toLowerCase();
-
-  // Condition risk
-  if (cond.includes('new')) score += 15;
-  else if (cond.includes('like new') || cond.includes('open box')) score += 10;
-  else if (cond.includes('refurbished')) score += 5;
-  else if (cond.includes('for parts') || cond.includes('not working')) score -= 30;
+  if (cond.includes('new'))                                           score -= 15;
+  else if (cond.includes('like new') || cond.includes('open box'))   score -= 10;
+  else if (cond.includes('refurbished'))                              score -= 5;
+  else if (cond.includes('poor'))                                     score += 30;
+  else if (cond.includes('for parts') || cond.includes('not working')) score += 40;
 
   // Very cheap items carry higher risk of being junk
-  if (item.currentPrice < PRICE_VERY_LOW) score -= 20;
-  else if (item.currentPrice < PRICE_LOW) score -= 10;
+  if (item.currentPrice < PRICE_VERY_LOW)   score += 20;
+  else if (item.currentPrice < PRICE_LOW)   score += 10;
 
   // High-value items carry more financial risk
-  if (item.currentPrice > PRICE_VERY_HIGH) score -= 10;
-  else if (item.currentPrice > PRICE_HIGH) score -= 5;
+  if (item.currentPrice > PRICE_EXTREME)    score += 15;
+  else if (item.currentPrice > PRICE_VERY_HIGH) score += 10;
+  else if (item.currentPrice > PRICE_HIGH)  score += 5;
 
   return Math.max(0, Math.min(100, score));
 }
 
 /**
- * Score how easy the deal is to execute (buy + resell).
- * Returns 0–100.
- */
-function calcExecutionScore(item) {
-  let score = 60; // baseline
-
-  // Fixed-price = easy to buy immediately
-  if (item.listingType === 'FIXED_PRICE' || item.listingType === 'BUY_IT_NOW') {
-    score += 20;
-  } else if (item.listingType === 'AUCTION') {
-    score -= 10;
-  }
-
-  // Items that are too cheap are hard to resell for meaningful profit
-  if (item.currentPrice < PRICE_LOW) score -= 15;
-
-  // Very expensive items require more capital
-  if (item.currentPrice > PRICE_EXTREME) score -= 20;
-  else if (item.currentPrice > PRICE_VERY_HIGH) score -= 10;
-
-  return Math.max(0, Math.min(100, score));
-}
-
-/**
- * Score a single eBay listing across all 5 dimensions.
+ * Score a single eBay listing across all 6 dimensions.
  * Returns the enriched item with all score fields populated.
  */
 function scoreItem(item, minProfitThreshold) {
   const estimatedResalePrice = estimateResalePrice(item);
   const expectedProfit = Math.max(0, estimatedResalePrice - item.currentPrice);
 
-  const valueScore = calcValueScore(item.currentPrice, estimatedResalePrice, minProfitThreshold);
-  const confidenceScore = calcConfidenceScore(item);
-  const speedScore = calcSpeedScore(item);
-  const riskScore = calcRiskScore(item);
-  const executionScore = calcExecutionScore(item);
+  const priceDiscountScore  = calcPriceDiscountScore(item.currentPrice, estimatedResalePrice, minProfitThreshold);
+  const liquidityScore      = calcLiquidityScore(item);
+  const sellerScore         = calcSellerScore(item);
+  const listingQualityScore = calcListingQualityScore(item);
+  const speedScore          = calcSpeedScore(item);
+  const riskScore           = calcRiskScore(item);
 
   const dealScore = Math.round(
-    valueScore * WEIGHTS.value +
-    confidenceScore * WEIGHTS.confidence +
-    speedScore * WEIGHTS.speed +
-    riskScore * WEIGHTS.risk +
-    executionScore * WEIGHTS.execution,
+    priceDiscountScore  * WEIGHTS.priceDiscount +
+    liquidityScore      * WEIGHTS.liquidity +
+    sellerScore         * WEIGHTS.seller +
+    listingQualityScore * WEIGHTS.listingQuality +
+    speedScore          * WEIGHTS.speed -
+    riskScore           * WEIGHTS.risk,
   );
 
   return {
     ...item,
     estimatedResalePrice,
     expectedProfit: Math.round(expectedProfit * 100) / 100,
-    dealScore,
-    valueScore,
-    confidenceScore,
+    dealScore: Math.max(0, dealScore),
+    priceDiscountScore,
+    liquidityScore,
+    sellerScore,
+    listingQualityScore,
     speedScore,
     riskScore,
-    executionScore,
   };
 }
 
-module.exports = { scoreItem, estimateResalePrice };
+module.exports = { scoreItem, estimateResalePrice, getHighValueMultiplier };
+

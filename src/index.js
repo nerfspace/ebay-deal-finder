@@ -24,6 +24,8 @@ const notificationService = new NotificationService(config);
 const filterEngine = new FilterEngine({
   minDealScore: config.deals.minDealScore,
   minProfitThreshold: config.deals.minProfitThreshold,
+  minSellerFeedbackPct: config.deals.minSellerFeedbackPct,
+  binOnly: config.deals.binOnly,
 });
 
 // Create Express app
@@ -68,8 +70,8 @@ async function runScan() {
     // Score all listings
     const scored = listings.map((item) => scoreItem(item, config.deals.minProfitThreshold));
 
-    // Filter to deals that meet minimum thresholds
-    const qualifyingDeals = filterEngine.filterDeals(scored);
+    // Filter to deals that meet minimum thresholds (capped at maxDealsPerScan)
+    const qualifyingDeals = filterEngine.filterDeals(scored, config.deals.maxDealsPerScan);
     logger.scan(`${qualifyingDeals.length} listing(s) passed deal filter.`);
 
     // Process each qualifying deal
