@@ -71,7 +71,7 @@ async function runScan() {
     const scored = listings.map((item) => scoreItem(item, config.deals.minProfitThreshold));
 
     // Filter to deals that meet minimum thresholds (capped at maxDealsPerScan)
-    const qualifyingDeals = filterEngine.filterDeals(scored, config.deals.maxDealsPerScan);
+    const qualifyingDeals = await filterEngine.filterDeals(scored, ebayService);
     logger.scan(`${qualifyingDeals.length} listing(s) passed deal filter.`);
 
     // Process each qualifying deal
