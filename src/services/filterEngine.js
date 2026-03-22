@@ -63,14 +63,16 @@ class FilterEngine {
    * 2. Seller Feedback: Must be >= 95%
    * 3. High-Value Category: Must match known profitable categories
    * 4. Exclude Keywords: Must NOT contain banned keywords
+   * 5. Sold Items Validation: Must have recently sold items to confirm demand
    */
-  filterDeals(items) {
+  async filterDeals(items, ebayService) {
     const passing = [];
     let skipped = {
       auction: 0,
       lowFeedback: 0,
       notHighValue: 0,
       excludedKeyword: 0,
+      noSoldItems: 0,
     };
 
     for (const item of items) {
@@ -105,6 +107,16 @@ class FilterEngine {
         continue;
       }
 
+      // 5. CHECK FOR RECENTLY SOLD ITEMS (validates market demand)
+      if (ebayService) {
+        const hasSoldItems = await ebayService.checkSoldItems(item.title);
+        if (!hasSoldItems) {
+          logger.debug(`[SKIP] No sold items found: "${item.title.substring(0, 50)}"`);
+          skipped.noSoldItems++;
+          continue;
+        }
+      }
+
       // ✅ PASSED ALL FILTERS
       logger.info(`[DEAL] ✅ ${item.title.substring(0, 60)}`);
       passing.push(item);
@@ -117,6 +129,7 @@ class FilterEngine {
     logger.info(`Low feedback skipped: ${skipped.lowFeedback}`);
     logger.info(`Not high-value skipped: ${skipped.notHighValue}`);
     logger.info(`Excluded keywords skipped: ${skipped.excludedKeyword}`);
+    logger.info(`No sold items skipped: ${skipped.noSoldItems}`);
     logger.info(`Output: ${passing.length} deals passed`);
 
     return passing;
