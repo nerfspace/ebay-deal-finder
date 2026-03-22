@@ -21,6 +21,13 @@ const config = {
   scan: {
     intervalMinutes: parseInt(process.env.SCAN_INTERVAL_MINUTES || '10', 10),
     listingsPerScan: 500,
+    // Search keywords to rotate through
+    keywords: (process.env.SEARCH_KEYWORDS || 'laptop,iPhone,iPad,MacBook,camera').split(',').map(k => k.trim()),
+    // Filter by condition
+    condition: process.env.SEARCH_CONDITION || 'USED',
+    // Price range filters
+    minPrice: parseFloat(process.env.MIN_PRICE || '20'),
+    maxPrice: parseFloat(process.env.MAX_PRICE || '2000'),
   },
   pushbullet: {
     apiKey: process.env.PUSHBULLET_API_KEY,
