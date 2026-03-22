@@ -2,7 +2,7 @@
 
 const path = require('path');
 const fs = require('fs');
-const sqlite3 = require('sqlite3').verbose();
+const Database = require('better-sqlite3');
 const logger = require('../utils/logger');
 
 let db = null;
@@ -47,31 +47,20 @@ CREATE TABLE IF NOT EXISTS scan_history (
 `;
 
 function initDb(dbPath) {
-  return new Promise((resolve, reject) => {
-    const resolvedPath = path.resolve(dbPath);
-    const dir = path.dirname(resolvedPath);
+  const resolvedPath = path.resolve(dbPath);
+  const dir = path.dirname(resolvedPath);
 
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, { recursive: true });
-    }
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
 
-    db = new sqlite3.Database(resolvedPath, (err) => {
-      if (err) {
-        reject(new Error(`Failed to open database: ${err.message}`));
-        return;
-      }
-      logger.info(`Database connected: ${resolvedPath}`);
+  db = new Database(resolvedPath);
+  logger.info(`Database connected: ${resolvedPath}`);
 
-      db.exec(SCHEMA, (schemaErr) => {
-        if (schemaErr) {
-          reject(new Error(`Failed to initialize schema: ${schemaErr.message}`));
-          return;
-        }
-        logger.info('Database schema initialized');
-        resolve(db);
-      });
-    });
-  });
+  db.exec(SCHEMA);
+  logger.info('Database schema initialized');
+
+  return Promise.resolve(db);
 }
 
 function getDb() {
@@ -82,20 +71,11 @@ function getDb() {
 }
 
 function closeDb() {
-  return new Promise((resolve, reject) => {
-    if (!db) {
-      resolve();
-      return;
-    }
-    db.close((err) => {
-      if (err) {
-        reject(err);
-      } else {
-        db = null;
-        resolve();
-      }
-    });
-  });
+  if (db) {
+    db.close();
+    db = null;
+  }
+  return Promise.resolve();
 }
 
 module.exports = { initDb, getDb, closeDb };
