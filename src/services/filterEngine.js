@@ -11,18 +11,10 @@ const DEFAULT_EXCLUDE_KEYWORDS = [
   'for parts', 'not working', 'broken', 'damaged', 'cracked',
   'replica', 'fake', 'inspired', 'digital', 'pdf', 'download',
   'warranty card', 'box only', 'empty box',
-  'used - poor', 'poor condition',
 ];
-
-/**
- * Conditions that are explicitly excluded from consideration.
- */
-const EXCLUDED_CONDITIONS = ['used - poor', 'poor', 'for parts or not working'];
 
 class FilterEngine {
   constructor(options = {}) {
-   this.minDealScore = options.minDealScore || 65;
-this.minProfitThreshold = options.minProfitThreshold || 15;
     this.minSellerFeedbackPct = options.minSellerFeedbackPct || 95;
     this.binOnly = options.binOnly !== false;
     this.excludeKeywords = new Set(DEFAULT_EXCLUDE_KEYWORDS);
@@ -64,64 +56,71 @@ this.minProfitThreshold = options.minProfitThreshold || 15;
   }
 
   /**
-   * Filter a batch of scored items, returning only those that pass all criteria.
-   * Results are sorted by dealScore descending and capped at maxDeals.
+   * Filter a batch of items, returning only those that pass all criteria.
+   * 
+   * FILTERS APPLIED (IN ORDER):
+   * 1. Listing Type: Must be FIXED_PRICE (Buy It Now)
+   * 2. Seller Feedback: Must be >= 95%
+   * 3. High-Value Category: Must match known profitable categories
+   * 4. Exclude Keywords: Must NOT contain banned keywords
    */
-  filterDeals(scoredItems, maxDeals = 20) {
+  filterDeals(items) {
     const passing = [];
+    let skipped = {
+      auction: 0,
+      lowFeedback: 0,
+      notHighValue: 0,
+      excludedKeyword: 0,
+    };
 
-    for (const item of scoredItems) {
-      // BIN-only filter: skip auctions when enabled
+    for (const item of items) {
+      // 1. BIN-only filter: skip auctions when enabled
       if (this.binOnly) {
         const lt = (item.listingType || '').toUpperCase();
         if (lt === 'AUCTION') {
-          logger.debug(`Skipped auction listing: "${item.title}"`);
+          logger.debug(`[SKIP] Auction: "${item.title.substring(0, 50)}"`);
+          skipped.auction++;
           continue;
         }
       }
 
-      // Exclude "used - poor" and similar conditions
-      const cond = (item.condition || '').toLowerCase();
-      if (EXCLUDED_CONDITIONS.some((c) => cond.includes(c))) {
-        logger.debug(`Excluded poor condition: "${item.title}"`);
-        continue;
-      }
-
-      // Minimum seller feedback percentage
+      // 2. Minimum seller feedback percentage
       if (item.sellerFeedbackPct != null && item.sellerFeedbackPct < this.minSellerFeedbackPct) {
-        logger.debug(`Excluded low seller feedback (${item.sellerFeedbackPct}%): "${item.title}"`);
+        logger.debug(`[SKIP] Low feedback (${item.sellerFeedbackPct}%): "${item.title.substring(0, 50)}"`);
+        skipped.lowFeedback++;
         continue;
       }
 
-      // Must belong to a high-value category
+      // 3. Must belong to a high-value category
       if (!this.isHighValueCategory(item)) {
-        logger.debug(`Excluded non-high-value category: "${item.title}"`);
+        logger.debug(`[SKIP] Not high-value: "${item.title.substring(0, 50)}"`);
+        skipped.notHighValue++;
         continue;
       }
 
-      // Must not match any exclude keyword
+      // 4. Must not match any exclude keyword
       if (this.isExcluded(item.title)) {
-        logger.debug(`Excluded by keyword: "${item.title}"`);
+        logger.debug(`[SKIP] Excluded keyword: "${item.title.substring(0, 50)}"`);
+        skipped.excludedKeyword++;
         continue;
       }
 
-      // Must meet minimum deal score threshold
-      if (item.dealScore < this.minDealScore) continue;
-
-      // Must meet minimum profit threshold
-      if (item.expectedProfit < this.minProfitThreshold) continue;
-
+      // ✅ PASSED ALL FILTERS
+      logger.info(`[DEAL] ✅ ${item.title.substring(0, 60)}`);
       passing.push(item);
     }
 
-    // Sort by deal score descending and cap at maxDeals
-    passing.sort((a, b) => b.dealScore - a.dealScore);
-    const topDeals = passing.slice(0, maxDeals);
+    // Log summary
+    logger.info(`=== FILTER SUMMARY ===`);
+    logger.info(`Input: ${items.length} items`);
+    logger.info(`Auctions skipped: ${skipped.auction}`);
+    logger.info(`Low feedback skipped: ${skipped.lowFeedback}`);
+    logger.info(`Not high-value skipped: ${skipped.notHighValue}`);
+    logger.info(`Excluded keywords skipped: ${skipped.excludedKeyword}`);
+    logger.info(`Output: ${passing.length} deals passed`);
 
-    logger.debug(`Filter: ${scoredItems.length} items → ${passing.length} passed → top ${topDeals.length} selected`);
-    return topDeals;
+    return passing;
   }
 }
 
 module.exports = FilterEngine;
-
