@@ -4,30 +4,18 @@ const moment = require('moment');
 const { getDb } = require('./db');
 
 function run(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    getDb().run(sql, params, function (err) {
-      if (err) reject(err);
-      else resolve({ lastID: this.lastID, changes: this.changes });
-    });
-  });
+  const stmt = getDb().prepare(sql);
+  return stmt.run(...params);
 }
 
 function get(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    getDb().get(sql, params, (err, row) => {
-      if (err) reject(err);
-      else resolve(row);
-    });
-  });
+  const stmt = getDb().prepare(sql);
+  return stmt.get(...params);
 }
 
 function all(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    getDb().all(sql, params, (err, rows) => {
-      if (err) reject(err);
-      else resolve(rows);
-    });
-  });
+  const stmt = getDb().prepare(sql);
+  return stmt.all(...params);
 }
 
 async function dealExists(ebayItemId) {
