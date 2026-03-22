@@ -10,7 +10,6 @@ class NotificationService {
     this.queue = [];
     this.isProcessing = false;
     this.minDelayMs = 1500; // 1.5 second delay between requests
-    this.retryCount = 0;
     this.maxRetries = 3;
   }
 
@@ -29,7 +28,7 @@ class NotificationService {
 
     while (this.queue.length > 0) {
       const notification = this.queue.shift();
-      await this.sendWithRetry(notification.title, notification.body, notification.url);
+      await this.sendWithRetry(notification.title, notification.body, notification.url, 1);
       await new Promise(resolve => setTimeout(resolve, this.minDelayMs));
     }
 
@@ -39,14 +38,19 @@ class NotificationService {
   async sendWithRetry(title, body, url = null, attempt = 1) {
     try {
       await this.sendPush(title, body, url);
+      return true;
     } catch (err) {
-      if (err.response?.status === 429 && attempt < this.maxRetries) {
-        const retryAfter = (err.response?.data?.retry_after || 30) * 1000;
-        logger.warn(`Discord rate-limited. Retrying after ${retryAfter}ms (attempt ${attempt}/${this.maxRetries})...`);
+      if (err.response?.status === 429 && attempt <= this.maxRetries) {
+        const retryAfter = Math.ceil((err.response?.data?.retry_after || 30) * 1000);
+        logger.warn(`Discord rate-limited (429). Retrying in ${retryAfter}ms... (attempt ${attempt}/${this.maxRetries})`);
         await new Promise(resolve => setTimeout(resolve, retryAfter));
         return this.sendWithRetry(title, body, url, attempt + 1);
+      } else if (err.response?.status === 429) {
+        logger.error(`Discord rate-limited after ${this.maxRetries} retries. Giving up on: "${title}"`);
+        return false;
       } else {
-        logger.error(`Failed to send notification: ${err.message}`);
+        logger.error(`Failed to send Discord notification: ${err.message}`);
+        return false;
       }
     }
   }
