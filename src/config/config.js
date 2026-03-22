@@ -21,7 +21,7 @@ const config = {
   scan: {
     intervalMinutes: parseInt(process.env.SCAN_INTERVAL_MINUTES || '10', 10),
     listingsPerScan: 500,
-    keywords: (process.env.SEARCH_KEYWORDS || 'Snap-on wrench,Griswold cast iron,Marantz amplifier,Titleist golf club,vintage camera lens,Wagner cookware,Pokemon card,Nintendo game,vintage audio').split(',').map(k => k.trim()),
+   keywords: [],  // No keyword filtering - use wildcard search
 condition: process.env.SEARCH_CONDITION || 'NEW',
     minPrice: parseFloat(process.env.MIN_PRICE || '20'),
     maxPrice: parseFloat(process.env.MAX_PRICE || '2000'),
