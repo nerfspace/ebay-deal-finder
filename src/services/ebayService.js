@@ -57,7 +57,7 @@ class EbayService {
         logger.debug(`Fetching eBay listings: offset=${offset}, limit=${limit}`);
         
         // Build filter string for price range and condition
-        const filter = `price:[${this.minPrice}..${this.maxPrice}],priceCurrency:USD,condition:{${this.condition}}`;
+        const filter = `price:[${this.minPrice}..${this.maxPrice}],priceCurrency:USD,condition:{${this.condition}},buyingOptions:{FIXED_PRICE}`;
         
         const response = await axios.get(`${this.baseUrl}/item_summary/search`, {
           headers: this._headers(),
