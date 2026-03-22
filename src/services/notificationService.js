@@ -9,7 +9,7 @@ class NotificationService {
     this.enabled = !!this.webhookUrl;
     this.queue = [];
     this.isProcessing = false;
-    this.minDelayMs = 1500; // 1.5 second delay between requests
+    this.minDelayMs = 2000; // : 2 seconds
     this.maxRetries = 3;
   }
 
