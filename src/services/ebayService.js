@@ -39,17 +39,16 @@ class EbayService {
         logger.debug(`Fetching eBay listings: offset=${offset}, limit=${limit}`);
         
         const filter = `price:[${this.minPrice}..${this.maxPrice}],priceCurrency:USD,condition:{${this.condition}},buyingOptions:{FIXED_PRICE}`;
+        
+        const searchTerms = ['tools', 'vintage', 'collectible', 'audio', 'camera', 'game'];
+        const q = searchTerms[Math.floor(Math.random() * searchTerms.length)];
+        logger.info(`[EBAY] Searching for: "${q}"`);
 
-// Use multiple narrow searches instead of wildcard
-const searchTerms = ['tools', 'vintage', 'collectible', 'audio', 'camera', 'game'];
-const q = searchTerms[Math.floor(Math.random() * searchTerms.length)];
-logger.info(`[EBAY] Searching for: "${q}"`);
-
-const response = await axios.get(`${this.baseUrl}/item_summary/search`, {
-  headers: this._headers(),
-  params: {
-    q: q,  // Use random search term instead of wildcard
-    sort: 'newlyListed',
+        const response = await axios.get(`${this.baseUrl}/item_summary/search`, {
+          headers: this._headers(),
+          params: {
+            q: q,
+            sort: 'newlyListed',
             limit,
             offset,
             fieldgroups: 'MATCHING_ITEMS',
@@ -112,6 +111,7 @@ const response = await axios.get(`${this.baseUrl}/item_summary/search`, {
       postedAt: item.itemCreationDate || null,
     };
   }
+
   /**
    * Search for recently sold items matching a query.
    * Returns true if matches found, false if none.
@@ -120,19 +120,18 @@ const response = await axios.get(`${this.baseUrl}/item_summary/search`, {
     try {
       logger.debug(`Checking sold items for: "${title.substring(0, 50)}"`);
       
-      // Use eBay Buy API sold items endpoint
       const response = await axios.get(`${this.baseUrl}/item_summary/search`, {
         headers: this._headers(),
         params: {
-          q: title,  // Search by exact title
+          q: title,
           sort: 'newlyListed',
           limit,
-          filter: 'buyingOptions:{SOLD}',  // Only sold items
+          filter: 'buyingOptions:{SOLD}',
         },
         timeout: 10000,
       });
 
-      const { itemSummaries = [] } = response.data;
+      const itemSummaries = response.data.itemSummaries || [];
       const hasSoldItems = itemSummaries.length > 0;
       
       if (hasSoldItems) {
@@ -144,9 +143,9 @@ const response = await axios.get(`${this.baseUrl}/item_summary/search`, {
       return hasSoldItems;
     } catch (err) {
       logger.warn(`Error checking sold items: ${err.message}`);
-      // Default to true (don't reject) if API fails
       return true;
     }
   }
+}
 
 module.exports = EbayService;
