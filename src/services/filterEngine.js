@@ -16,8 +16,8 @@ const DEFAULT_EXCLUDE_KEYWORDS = [
 class FilterEngine {
   constructor(options = {}) {
     this.minSellerFeedbackPct = options.minSellerFeedbackPct || 95;
-    this.minPriceDifference = options.minPriceDifference || 50;
-    this.maxSellerSales = options.maxSellerSales || 100; // NEW: Only sellers with ≤100 sales
+    this.minPriceDifference = options.minPriceDifference || 30;
+this.maxSellerSales = options.maxSellerSales || 200;
     this.binOnly = options.binOnly !== false;
     this.excludeKeywords = new Set(DEFAULT_EXCLUDE_KEYWORDS);
   }
