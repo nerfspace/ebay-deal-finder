@@ -113,6 +113,50 @@ class EbayService {
   }
 
   /**
+   * Check if seller has 100 or fewer sales (individual/small seller)
+   * Returns { isSmallSeller: boolean, totalSales: number }
+   */
+  async checkSellerSize(item, maxSellerSales = 100) {
+    try {
+      const sellerName = item.seller;
+      const feedbackScore = item.sellerFeedback;
+
+      if (!sellerName || !feedbackScore) {
+        logger.debug(`Seller info missing for: "${item.title.substring(0, 50)}"`);
+        return {
+          isSmallSeller: false,
+          totalSales: 0,
+          reason: 'No seller data',
+        };
+      }
+
+      logger.debug(`Checking seller size for: ${sellerName} (feedback: ${feedbackScore})`);
+
+      // eBay feedback score approximately equals total sales
+      // Small sellers typically have feedback under 100
+      const isSmallSeller = feedbackScore <= maxSellerSales;
+
+      logger.debug(
+        `Seller: ${sellerName} | Total sales (feedback): ${feedbackScore} | ` +
+        `Small seller (≤${maxSellerSales}): ${isSmallSeller ? 'YES' : 'NO'}`
+      );
+
+      return {
+        isSmallSeller,
+        totalSales: feedbackScore,
+        reason: isSmallSeller ? 'Small seller' : `Too many sales (${feedbackScore})`,
+      };
+    } catch (err) {
+      logger.warn(`Error checking seller size: ${err.message}`);
+      return {
+        isSmallSeller: false,
+        totalSales: 0,
+        reason: 'Error checking seller',
+      };
+    }
+  }
+
+  /**
    * Search for recently sold items matching a query.
    * Returns { hasSoldItems: boolean, avgSoldPrice: number, priceDifference: number }
    */
@@ -143,42 +187,5 @@ class EbayService {
         };
       }
 
-      // Calculate average price of sold items
-      const soldPrices = itemSummaries
-        .map(item => item.price ? parseFloat(item.price.value) : 0)
-        .filter(price => price > 0);
-
-      const avgSoldPrice = soldPrices.length > 0
-        ? soldPrices.reduce((a, b) => a + b, 0) / soldPrices.length
-        : 0;
-
-      const priceDifference = avgSoldPrice - currentPrice;
-      const meetsThreshold = priceDifference >= minPriceDifference;
-
-      logger.debug(
-        `✅ Found ${itemSummaries.length} sold items | ` +
-        `Avg sold: $${avgSoldPrice.toFixed(2)} | ` +
-        `Current: $${currentPrice.toFixed(2)} | ` +
-        `Difference: $${priceDifference.toFixed(2)} | ` +
-        `Meets $${minPriceDifference} threshold: ${meetsThreshold ? 'YES' : 'NO'}`
-      );
-
-      return {
-        hasSoldItems: true,
-        avgSoldPrice,
-        priceDifference,
-        meetsThreshold,
-      };
-    } catch (err) {
-      logger.warn(`Error checking sold items: ${err.message}`);
-      return {
-        hasSoldItems: false,
-        avgSoldPrice: 0,
-        priceDifference: 0,
-        meetsThreshold: false,
-      };
-    }
-  }
-}
-
-module.exports = EbayService;
+      //*
+
