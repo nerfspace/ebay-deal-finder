@@ -47,64 +47,62 @@ class FilterEngine {
     return false;
   }
 
-  async filterDeals(items, ebayService) {
-    var passing = [];
-    var skipped = {
+    async filterDeals(items, ebayService) {
+    const passing = [];
+    let skipped = {
       auction: 0,
       lowFeedback: 0,
       excludedKeyword: 0,
       noSoldItems: 0,
-      insufficientPriceDifference: 0
+      insufficientPriceDifference: 0,
     };
 
-    for (var i = 0; i < items.length; i++) {
-      var item = items[i];
-
+    for (const item of items) {
       if (this.binOnly) {
-        var lt = (item.listingType || '').toUpperCase();
+        const lt = (item.listingType || '').toUpperCase();
         if (lt === 'AUCTION') {
-          logger.debug('[SKIP] Auction: "' + item.title.substring(0, 50) + '"');
+          logger.debug('[SKIP] Auction: ' + item.title.substring(0, 50));
           skipped.auction++;
           continue;
         }
       }
 
       if (item.sellerFeedbackPct != null && item.sellerFeedbackPct < this.minSellerFeedbackPct) {
-        logger.debug('[SKIP] Low feedback (' + item.sellerFeedbackPct + '%): "' + item.title.substring(0, 50) + '"');
+        logger.debug('[SKIP] Low feedback: ' + item.title.substring(0, 50));
         skipped.lowFeedback++;
         continue;
       }
 
       if (this.isExcluded(item.title)) {
-        logger.debug('[SKIP] Excluded keyword: "' + item.title.substring(0, 50) + '"');
+        logger.debug('[SKIP] Excluded keyword: ' + item.title.substring(0, 50));
         skipped.excludedKeyword++;
         continue;
       }
 
       if (!ebayService) {
-        logger.debug('[SKIP] No eBay service: "' + item.title.substring(0, 50) + '"');
+        logger.debug('[SKIP] No eBay service: ' + item.title.substring(0, 50));
         continue;
       }
 
-      var soldCheck = await ebayService.checkSoldItems(
+      const soldCheck = await ebayService.checkSoldItems(
         item.title,
         item.currentPrice,
         this.minPriceDifference
       );
 
       if (!soldCheck.hasSoldItems) {
-        logger.debug('[SKIP] NO RECENTLY SOLD ITEMS: "' + item.title.substring(0, 50) + '"');
+        logger.debug('[SKIP] NO RECENTLY SOLD ITEMS: ' + item.title.substring(0, 50));
         skipped.noSoldItems++;
         continue;
       }
 
       if (!soldCheck.meetsThreshold) {
-        logger.debug('[SKIP] Price difference too low ($' + soldCheck.priceDifference.toFixed(2) + ' < $' + this.minPriceDifference + '): "' + item.title.substring(0, 50) + '"');
+        logger.debug('[SKIP] Price difference too low: ' + item.title.substring(0, 50));
         skipped.insufficientPriceDifference++;
         continue;
       }
 
-      logger.info('[DEAL] PASSED ALL FILTERS | ' + item.title.substring(0, 60) + ' | Sold: $' + soldCheck.recentlySoldPrice.toFixed(2));
+      logger.info('[DEAL] PASSED | ' + item.title.substring(0, 60) + ' | Sold: $' + soldCheck.recentlySoldPrice.toFixed(2));
       passing.push(item);
     }
 
