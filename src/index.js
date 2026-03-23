@@ -68,7 +68,12 @@ async function runScan() {
     logger.scan(`Fetched ${listingsChecked} listings from eBay.`);
 
     // Score all listings
-    const scored = listings.map((item) => scoreItem(item, config.deals.minProfitThreshold));
+       // Score all listings with actual sold prices
+    const scored = await Promise.all(listings.map(async (item) => {
+      const soldCheck = await ebayService.checkSoldItems(item.title, item.currentPrice, 0);
+      const actualSoldPrice = soldCheck.avgSoldPrice || null;
+      return scoreItem(item, config.deals.minProfitThreshold, actualSoldPrice);
+    }));
 
     // Filter to deals that meet minimum thresholds (capped at maxDealsPerScan)
     const qualifyingDeals = await filterEngine.filterDeals(scored, ebayService);
@@ -89,7 +94,7 @@ async function runScan() {
 
         logger.deal(
           `NEW DEAL | Score: ${deal.dealScore}/100 | ` +
-          `$${deal.currentPrice.toFixed(2)} → ~$${deal.estimatedResalePrice.toFixed(2)} | ` +
+                    `$${deal.currentPrice.toFixed(2)} → $${deal.estimatedResalePrice.toFixed(2)} (actual) | ` +
           `Profit: ~$${deal.expectedProfit.toFixed(2)} | ` +
           `"${deal.title.substring(0, 60)}"`,
         );
