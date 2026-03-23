@@ -93,34 +93,38 @@ class FilterEngine {
         continue;
       }
 
-      // 4 & 5. CHECK SOLD ITEMS AND PRICE DIFFERENCE
-      if (ebayService) {
-        const soldCheck = await ebayService.checkSoldItems(
-          item.title,
-          item.currentPrice,
-          this.minPriceDifference
+           // 4 & 5. CHECK SOLD ITEMS AND PRICE DIFFERENCE (REQUIRED)
+      if (!ebayService) {
+        logger.debug(`[SKIP] No eBay service: "${item.title.substring(0, 50)}"`);
+        continue;
+      }
+
+      const soldCheck = await ebayService.checkSoldItems(
+        item.title,
+        item.currentPrice,
+        this.minPriceDifference
+      );
+
+      // Must have recently sold items - this is now a HARD requirement
+      if (!soldCheck.hasSoldItems) {
+        logger.debug(`[SKIP] ❌ NO RECENTLY SOLD ITEMS: "${item.title.substring(0, 50)}"`);
+        skipped.noSoldItems++;
+        continue;
+      }
+
+      // Must meet minimum price difference threshold
+      if (!soldCheck.meetsThreshold) {
+        logger.debug(
+          `[SKIP] Price difference too low ($${soldCheck.priceDifference.toFixed(2)} < $${this.minPriceDifference}): ` +
+          `"${item.title.substring(0, 50)}"`
         );
-
-        if (!soldCheck.hasSoldItems) {
-          logger.debug(`[SKIP] No sold items found: "${item.title.substring(0, 50)}"`);
-          skipped.noSoldItems++;
-          continue;
-        }
-
-        if (!soldCheck.meetsThreshold) {
-          logger.debug(
-            `[SKIP] Price difference too low ($${soldCheck.priceDifference.toFixed(2)} < $${this.minPriceDifference}): ` +
-            `"${item.title.substring(0, 50)}"`
-          );
-          skipped.insufficientPriceDifference++;
-          continue;
-        }
+        skipped.insufficientPriceDifference++;
+        continue;
       }
 
       // ✅ PASSED ALL FILTERS
-      logger.info(`[DEAL] ✅ ${item.title.substring(0, 60)} | Seller: ${item.seller} (${item.sellerFeedback} sales)`);
+      logger.info(`[DEAL] ✅ ${item.title.substring(0, 60)} | Sold: $${soldCheck.recentlySoldPrice.toFixed(2)}`);
       passing.push(item);
-    }
 
     // Log summary
     logger.info(`=== FILTER SUMMARY ===`);
