@@ -106,6 +106,7 @@ async function runScan() {
     logger.scan(`${qualifyingDeals.length} listing(s) passed deal filter.`);
 
     // Process each qualifying deal
+    const dealsToNotify = [];
     for (const deal of qualifyingDeals) {
       try {
         const exists = await dealExists(deal.ebayItemId);
@@ -128,14 +129,20 @@ async function runScan() {
           `"${deal.title.substring(0, 60)}"`,
         );
 
-        // Send push notification
-        const sent = await notificationService.notifyDeal(deal, soldData);
-        if (sent) {
-          await markNotified(deal.ebayItemId);
-        }
+        // Queue notification (don't send yet)
+        await notificationService.notifyDeal(deal, soldData);
+        dealsToNotify.push(deal.ebayItemId);
       } catch (dealErr) {
         logger.error(`Error processing deal ${deal.ebayItemId}: ${dealErr.message}`);
         errors++;
+      }
+    }
+
+    // Send all queued notifications in one or more batches
+    if (dealsToNotify.length > 0) {
+      const sent = await notificationService.flushQueue();
+      if (sent) {
+        await Promise.all(dealsToNotify.map(id => markNotified(id)));
       }
     }
   } catch (err) {
