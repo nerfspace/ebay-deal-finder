@@ -16,7 +16,8 @@ const DEFAULT_EXCLUDE_KEYWORDS = [
 class FilterEngine {
   constructor(options = {}) {
     this.minSellerFeedbackPct = options.minSellerFeedbackPct || 95;
-    this.minPriceDifference = options.minPriceDifference || 50; // NEW: $50 minimum
+    this.minPriceDifference = options.minPriceDifference || 50;
+    this.maxSellerSales = options.maxSellerSales || 100; // NEW: Only sellers with ≤100 sales
     this.binOnly = options.binOnly !== false;
     this.excludeKeywords = new Set(DEFAULT_EXCLUDE_KEYWORDS);
   }
@@ -62,16 +63,18 @@ class FilterEngine {
    * FILTERS APPLIED (IN ORDER):
    * 1. Listing Type: Must be FIXED_PRICE (Buy It Now)
    * 2. Seller Feedback: Must be >= 95%
-   * 3. High-Value Category: Must match known profitable categories
-   * 4. Exclude Keywords: Must NOT contain banned keywords
-   * 5. Sold Items Validation: Must have recently sold items
-   * 6. Price Difference: Must have >= $50 difference from sold price
+   * 3. Seller Size: Must have ≤100 total sales (small seller filter)
+   * 4. High-Value Category: Must match known profitable categories
+   * 5. Exclude Keywords: Must NOT contain banned keywords
+   * 6. Sold Items Validation: Must have recently sold items
+   * 7. Price Difference: Must have >= $50 difference from sold price
    */
   async filterDeals(items, ebayService) {
     const passing = [];
     let skipped = {
       auction: 0,
       lowFeedback: 0,
+      largeSellerTooManysSales: 0,
       notHighValue: 0,
       excludedKeyword: 0,
       noSoldItems: 0,
@@ -96,21 +99,34 @@ class FilterEngine {
         continue;
       }
 
-      // 3. Must belong to a high-value category
+      // 3. SELLER SIZE FILTER - Only small sellers (≤100 sales)
+      if (ebayService) {
+        const sellerCheck = await ebayService.checkSellerSize(item, this.maxSellerSales);
+        if (!sellerCheck.isSmallSeller) {
+          logger.debug(
+            `[SKIP] Seller too established (${sellerCheck.totalSales} sales): ` +
+            `"${item.title.substring(0, 50)}" by ${item.seller}`
+          );
+          skipped.largeSellerTooManysSales++;
+          continue;
+        }
+      }
+
+      // 4. Must belong to a high-value category
       if (!this.isHighValueCategory(item)) {
         logger.debug(`[SKIP] Not high-value: "${item.title.substring(0, 50)}"`);
         skipped.notHighValue++;
         continue;
       }
 
-      // 4. Must not match any exclude keyword
+      // 5. Must not match any exclude keyword
       if (this.isExcluded(item.title)) {
         logger.debug(`[SKIP] Excluded keyword: "${item.title.substring(0, 50)}"`);
         skipped.excludedKeyword++;
         continue;
       }
 
-      // 5 & 6. CHECK SOLD ITEMS AND PRICE DIFFERENCE
+      // 6 & 7. CHECK SOLD ITEMS AND PRICE DIFFERENCE
       if (ebayService) {
         const soldCheck = await ebayService.checkSoldItems(
           item.title,
@@ -135,7 +151,7 @@ class FilterEngine {
       }
 
       // ✅ PASSED ALL FILTERS
-      logger.info(`[DEAL] ✅ ${item.title.substring(0, 60)}`);
+      logger.info(`[DEAL] ✅ ${item.title.substring(0, 60)} | Seller: ${item.seller} (${item.sellerFeedback} sales)`);
       passing.push(item);
     }
 
@@ -144,6 +160,7 @@ class FilterEngine {
     logger.info(`Input: ${items.length} items`);
     logger.info(`Auctions skipped: ${skipped.auction}`);
     logger.info(`Low feedback skipped: ${skipped.lowFeedback}`);
+    logger.info(`Large seller skipped (>${this.maxSellerSales} sales): ${skipped.largeSellerTooManysSales}`);
     logger.info(`Not high-value skipped: ${skipped.notHighValue}`);
     logger.info(`Excluded keywords skipped: ${skipped.excludedKeyword}`);
     logger.info(`No sold items skipped: ${skipped.noSoldItems}`);
