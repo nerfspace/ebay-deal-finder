@@ -53,21 +53,16 @@ this.maxSellerSales = options.maxSellerSales || 200;
    * Check whether an item belongs to a high-value category.
    * Returns true if the item's liquidity multiplier exceeds 1.0.
    */
-  isHighValueCategory(item) {
-    return getHighValueMultiplier(item) > 1.0;
-  }
+  
 
   /**
-   * Filter a batch of items, returning only those that pass all criteria.
-   * 
-   * FILTERS APPLIED (IN ORDER):
+     * FILTERS APPLIED (IN ORDER):
    * 1. Listing Type: Must be FIXED_PRICE (Buy It Now)
    * 2. Seller Feedback: Must be >= 95%
-   * 3. Seller Size: Must have ≤100 total sales (small seller filter)
-   * 4. High-Value Category: Must match known profitable categories
-   * 5. Exclude Keywords: Must NOT contain banned keywords
-   * 6. Sold Items Validation: Must have recently sold items
-   * 7. Price Difference: Must have >= $50 difference from sold price
+   * 3. Seller Size: Must have ≤500 total sales
+   * 4. Exclude Keywords: Must NOT contain banned keywords
+   * 5. Sold Items Validation: Must have recently sold items
+   * 6. Price Difference: Must have >= $30 difference from sold price
    */
   async filterDeals(items, ebayService) {
     const passing = [];
@@ -112,12 +107,7 @@ this.maxSellerSales = options.maxSellerSales || 200;
         }
       }
 
-      // 4. Must belong to a high-value category
-      if (!this.isHighValueCategory(item)) {
-        logger.debug(`[SKIP] Not high-value: "${item.title.substring(0, 50)}"`);
-        skipped.notHighValue++;
-        continue;
-      }
+    
 
       // 5. Must not match any exclude keyword
       if (this.isExcluded(item.title)) {
