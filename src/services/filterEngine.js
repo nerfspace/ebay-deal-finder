@@ -13,6 +13,7 @@ class FilterEngine {
     if (!options) options = {};
     this.minSellerFeedbackPct = options.minSellerFeedbackPct || 95;
     this.minPriceDifference = options.minPriceDifference || 30;
+    this.minProfitPercentage = options.minProfitPercentage || 25;
     this.binOnly = options.binOnly !== false;
     this.excludeKeywords = new Set(DEFAULT_EXCLUDE_KEYWORDS);
   }
@@ -42,14 +43,22 @@ class FilterEngine {
     return false;
   }
 
-  async filterDeals(items, ebayService) {
+  /**
+   * Filter a list of scored items to qualifying deals.
+   *
+   * @param {object[]} items - Scored listing objects
+   * @param {Map<string, object>} soldDataMap - Pre-computed sold/market data keyed by ebayItemId.
+   *        Each value is the result of ebayService.checkSoldItems().
+   *        Pass null/undefined to skip the sold-price filter (not recommended).
+   */
+  async filterDeals(items, soldDataMap) {
     var passing = [];
     var skipped = {
       auction: 0,
       lowFeedback: 0,
       excludedKeyword: 0,
       noSoldItems: 0,
-      insufficientPriceDifference: 0
+      insufficientPriceDifference: 0,
     };
 
     for (var idx = 0; idx < items.length; idx++) {
@@ -76,30 +85,27 @@ class FilterEngine {
         continue;
       }
 
-      if (!ebayService) {
-        logger.debug('[SKIP] No eBay service: ' + item.title.substring(0, 50));
-        continue;
-      }
+      // Use the pre-computed sold/market data — no second API call
+      var soldData = soldDataMap ? soldDataMap.get(item.ebayItemId) : null;
 
-      var soldCheck = await ebayService.checkSoldItems(
-        item.title,
-        item.currentPrice,
-        this.minPriceDifference
-      );
-
-      if (!soldCheck.hasSoldItems) {
-        logger.debug('[SKIP] NO RECENTLY SOLD ITEMS: ' + item.title.substring(0, 50));
+      if (!soldData || !soldData.hasSoldItems) {
+        logger.debug('[SKIP] No matching market items: ' + item.title.substring(0, 50));
         skipped.noSoldItems = skipped.noSoldItems + 1;
         continue;
       }
 
-      if (!soldCheck.meetsThreshold) {
-        logger.debug('[SKIP] Price difference too low: ' + item.title.substring(0, 50));
+      if (soldData.profitPercentage < this.minProfitPercentage) {
+        logger.debug('[SKIP] Profit margin too low (' + (soldData.profitPercentage || 0).toFixed(1) + '%): ' + item.title.substring(0, 50));
         skipped.insufficientPriceDifference = skipped.insufficientPriceDifference + 1;
         continue;
       }
 
-      logger.info('[DEAL] PASSED | ' + item.title.substring(0, 60) + ' | Sold: $' + soldCheck.recentlySoldPrice.toFixed(2));
+      logger.info(
+        '[DEAL] PASSED | ' + item.title.substring(0, 60) +
+        ' | Market: $' + soldData.medianSoldPrice.toFixed(2) +
+        ' | Similarity: ' + (soldData.bestSimilarity * 100).toFixed(1) + '%' +
+        ' | Margin: ' + soldData.profitPercentage.toFixed(1) + '%'
+      );
       passing.push(item);
     }
 
@@ -108,8 +114,8 @@ class FilterEngine {
     logger.info('Auctions skipped: ' + skipped.auction);
     logger.info('Low feedback skipped: ' + skipped.lowFeedback);
     logger.info('Excluded keywords skipped: ' + skipped.excludedKeyword);
-    logger.info('No sold items skipped: ' + skipped.noSoldItems);
-    logger.info('Insufficient price difference skipped: ' + skipped.insufficientPriceDifference);
+    logger.info('No matching market items skipped: ' + skipped.noSoldItems);
+    logger.info('Insufficient profit margin skipped: ' + skipped.insufficientPriceDifference);
     logger.info('Output: ' + passing.length + ' deals passed');
 
     return passing;

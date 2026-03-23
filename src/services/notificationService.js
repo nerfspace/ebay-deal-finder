@@ -91,9 +91,32 @@ class NotificationService {
     }
   }
 
-  async notifyDeal(deal) {
+  async notifyDeal(deal, soldData) {
+    if (!soldData) soldData = {};
     const title = `🔥 ${deal.title.substring(0, 60)}`;
-    const body = `💰 Price: $${deal.currentPrice.toFixed(2)}\n📈 Profit: ~$${deal.expectedProfit?.toFixed(2) || 'N/A'}\n🔗 [Buy Now](${deal.url})`;
+
+    const marketPrice = soldData.medianSoldPrice != null
+      ? `$${soldData.medianSoldPrice.toFixed(2)}`
+      : `~$${deal.estimatedResalePrice ? deal.estimatedResalePrice.toFixed(2) : 'N/A'} (est.)`;
+
+    const similarityPct = soldData.bestSimilarity != null
+      ? `${(soldData.bestSimilarity * 100).toFixed(1)}%`
+      : 'N/A';
+
+    const matchCount = soldData.matchCount != null ? soldData.matchCount : 0;
+
+    const profitPct = soldData.profitPercentage != null
+      ? `${soldData.profitPercentage.toFixed(1)}%`
+      : (deal.expectedProfit && deal.currentPrice ? `${((deal.expectedProfit / deal.currentPrice) * 100).toFixed(1)}%` : 'N/A');
+
+    const body =
+      `💰 **Listed:** $${deal.currentPrice.toFixed(2)}\n` +
+      `📈 **Market Price:** ${marketPrice}\n` +
+      `💵 **Profit:** ~$${deal.expectedProfit != null ? deal.expectedProfit.toFixed(2) : 'N/A'} (${profitPct})\n` +
+      `🔍 **Title Match:** ${similarityPct} (${matchCount} comparable listing${matchCount !== 1 ? 's' : ''})\n` +
+      `🏆 **Deal Score:** ${deal.dealScore}/100\n` +
+      `🔗 [Buy Now](${deal.url})`;
+
     return this.queueNotification(title, body, deal.url, deal.ebayItemId);
   }
 }
