@@ -35,7 +35,13 @@ class EbayService {
       try {
         logger.debug(`Fetching eBay listings: offset=${offset}, limit=${limit}`);
         const filter = `price:[${this.minPrice}..${this.maxPrice}],priceCurrency:USD,condition:{${this.condition}},buyingOptions:{FIXED_PRICE}`;
-        const searchTerms = ['tools', 'vintage', 'collectible', 'audio', 'camera', 'game'];
+                const searchTerms = [
+          'tools', 'vintage', 'collectible', 'audio', 'camera', 'game',
+          'electronics', 'jewelry', 'watches', 'coins', 'stamps', 'sports',
+          'toys', 'art', 'antique', 'furniture', 'books', 'memorabilia',
+          'musical instruments', 'photography', 'stamps', 'records', 'comic',
+          'gaming', 'automation', 'industrial', 'machinery', 'scientific'
+        ];
         const q = searchTerms[Math.floor(Math.random() * searchTerms.length)];
         logger.info(`[EBAY] Searching for: "${q}"`);
         const response = await axios.get(`${this.baseUrl}/item_summary/search`, {
