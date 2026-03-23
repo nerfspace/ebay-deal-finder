@@ -114,9 +114,9 @@ class EbayService {
 
   /**
    * Search for recently sold items matching a query.
-   * Returns true if matches found, false if none.
+   * Returns { hasSoldItems: boolean, avgSoldPrice: number, priceDifference: number }
    */
-  async checkSoldItems(title, limit = 5) {
+  async checkSoldItems(title, currentPrice, minPriceDifference = 50, limit = 5) {
     try {
       logger.debug(`Checking sold items for: "${title.substring(0, 50)}"`);
       
@@ -132,18 +132,51 @@ class EbayService {
       });
 
       const itemSummaries = response.data.itemSummaries || [];
-      const hasSoldItems = itemSummaries.length > 0;
       
-      if (hasSoldItems) {
-        logger.debug(`✅ Found ${itemSummaries.length} sold items for: "${title.substring(0, 50)}"`);
-      } else {
+      if (itemSummaries.length === 0) {
         logger.debug(`❌ No sold items found for: "${title.substring(0, 50)}"`);
+        return {
+          hasSoldItems: false,
+          avgSoldPrice: 0,
+          priceDifference: 0,
+          meetsThreshold: false,
+        };
       }
-      
-      return hasSoldItems;
+
+      // Calculate average price of sold items
+      const soldPrices = itemSummaries
+        .map(item => item.price ? parseFloat(item.price.value) : 0)
+        .filter(price => price > 0);
+
+      const avgSoldPrice = soldPrices.length > 0
+        ? soldPrices.reduce((a, b) => a + b, 0) / soldPrices.length
+        : 0;
+
+      const priceDifference = avgSoldPrice - currentPrice;
+      const meetsThreshold = priceDifference >= minPriceDifference;
+
+      logger.debug(
+        `✅ Found ${itemSummaries.length} sold items | ` +
+        `Avg sold: $${avgSoldPrice.toFixed(2)} | ` +
+        `Current: $${currentPrice.toFixed(2)} | ` +
+        `Difference: $${priceDifference.toFixed(2)} | ` +
+        `Meets $${minPriceDifference} threshold: ${meetsThreshold ? 'YES' : 'NO'}`
+      );
+
+      return {
+        hasSoldItems: true,
+        avgSoldPrice,
+        priceDifference,
+        meetsThreshold,
+      };
     } catch (err) {
       logger.warn(`Error checking sold items: ${err.message}`);
-      return true;
+      return {
+        hasSoldItems: false,
+        avgSoldPrice: 0,
+        priceDifference: 0,
+        meetsThreshold: false,
+      };
     }
   }
 }
