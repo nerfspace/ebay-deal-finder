@@ -27,9 +27,9 @@ class EbayService {
   }
 
   async fetchRecentListings(total = 500) {
-    const listings = [];
-    let offset = 0;
-    const searchTerms = [
+    var listings = [];
+    var offset = 0;
+    var searchTerms = [
       'tools', 'vintage', 'collectible', 'audio', 'camera', 'game',
       'electronics', 'jewelry', 'watches', 'coins', 'stamps', 'sports',
       'toys', 'art', 'antique', 'furniture', 'books', 'memorabilia',
@@ -40,38 +40,66 @@ class EbayService {
     logger.info('[EBAY] Fetching ' + total + ' most recent NEW listings...');
     
     while (listings.length < total) {
-      const limit = Math.min(this.pageSize, total - listings.length);
-      try {
-        logger.debug('Fetching eBay listings: offset=' + offset + ', limit=' + limit);
-        const filter = 'price:[' + this.minPrice + '..' + this.maxPrice + '],priceCurrency:USD,condition:{' + this.condition + '},buyingOptions:{FIXED_PRICE}';
-        const q = searchTerms[Math.floor(Math.random() * searchTerms.length)];
-        logger.info('[EBAY] Searching for: "' + q + '"');
+      var limit = Math.min(this.pageSize, total - listings.length);
+      var retryCount = 0;
+      var maxRetries = 3;
+      var backoffMs = 1000;
 
-        const response = await axios.get(this.baseUrl + '/item_summary/search', {
-          headers: await this._headers(),
-          params: { q: q, sort: 'newlyListed', limit: limit, offset: offset, fieldgroups: 'MATCHING_ITEMS', filter: filter },
-          timeout: 15000,
-        });
+      var success = false;
+      var itemSummaries = [];
+      var apiTotal = 0;
 
-        const itemSummaries = response.data.itemSummaries || [];
-        const apiTotal = response.data.total || 0;
+      while (retryCount < maxRetries && !success) {
+        try {
+          logger.debug('Fetching eBay listings: offset=' + offset + ', limit=' + limit + ', retry=' + retryCount);
+          var filter = 'price:[' + this.minPrice + '..' + this.maxPrice + '],priceCurrency:USD,condition:{' + this.condition + '},buyingOptions:{FIXED_PRICE}';
+          var q = searchTerms[Math.floor(Math.random() * searchTerms.length)];
+          logger.info('[EBAY] Searching for: "' + q + '"');
 
-        if (itemSummaries.length === 0) {
-          logger.debug('No more listings returned by eBay API.');
-          break;
+          var response = await axios.get(this.baseUrl + '/item_summary/search', {
+            headers: await this._headers(),
+            params: { q: q, sort: 'newlyListed', limit: limit, offset: offset, fieldgroups: 'MATCHING_ITEMS', filter: filter },
+            timeout: 15000,
+          });
+
+          itemSummaries = response.data.itemSummaries || [];
+          apiTotal = response.data.total || 0;
+          success = true;
+
+          if (itemSummaries.length === 0) {
+            logger.debug('No more listings returned by eBay API.');
+            break;
+          }
+
+          listings.push.apply(listings, itemSummaries.map(this._normalizeItem.bind(this)));
+          offset = offset + itemSummaries.length;
+
+          if (offset >= apiTotal || listings.length >= total) {
+            break;
+          }
+        } catch (err) {
+          var status = err.response ? err.response.status : 'N/A';
+          var message = err.response ? JSON.stringify(err.response.data) : err.message;
+
+          if (status === 429) {
+            logger.warn('Rate limited (429). Waiting ' + backoffMs + 'ms before retry...');
+            retryCount = retryCount + 1;
+            if (retryCount < maxRetries) {
+              await new Promise(function(resolve) { setTimeout(resolve, backoffMs); });
+              backoffMs = backoffMs * 2;
+            } else {
+              logger.error('eBay API rate limit - max retries exceeded');
+              throw err;
+            }
+          } else {
+            logger.error('eBay API request failed (status ' + status + '): ' + message);
+            throw err;
+          }
         }
+      }
 
-        listings.push(...itemSummaries.map(this._normalizeItem.bind(this)));
-        offset += itemSummaries.length;
-
-        if (offset >= apiTotal || listings.length >= total) {
-          break;
-        }
-      } catch (err) {
-        const status = err.response ? err.response.status : 'N/A';
-        const message = err.response ? JSON.stringify(err.response.data) : err.message;
-        logger.error('eBay API request failed (status ' + status + '): ' + message);
-        throw err;
+      if (!success) {
+        break;
       }
     }
 
