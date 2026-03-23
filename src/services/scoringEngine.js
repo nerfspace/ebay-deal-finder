@@ -247,11 +247,12 @@ function calcRiskScore(item) {
  * Score a single eBay listing across all 6 dimensions.
  * Returns the enriched item with all score fields populated.
  */
-function scoreItem(item, minProfitThreshold) {
-  const estimatedResalePrice = estimateResalePrice(item);
-  const expectedProfit = Math.max(0, estimatedResalePrice - item.currentPrice);
+function scoreItem(item, minProfitThreshold, actualSoldPrice = null) {
+  // Use actual sold price if available, otherwise estimate
+  const resalePrice = actualSoldPrice || estimateResalePrice(item);
+  const expectedProfit = Math.max(0, resalePrice - item.currentPrice);
 
-  const priceDiscountScore  = calcPriceDiscountScore(item.currentPrice, estimatedResalePrice, minProfitThreshold);
+  const priceDiscountScore  = calcPriceDiscountScore(item.currentPrice, resalePrice, minProfitThreshold);
   const liquidityScore      = calcLiquidityScore(item);
   const sellerScore         = calcSellerScore(item);
   const listingQualityScore = calcListingQualityScore(item);
@@ -269,7 +270,7 @@ function scoreItem(item, minProfitThreshold) {
 
   return {
     ...item,
-    estimatedResalePrice,
+    estimatedResalePrice: resalePrice,
     expectedProfit: Math.round(expectedProfit * 100) / 100,
     dealScore: Math.max(0, dealScore),
     priceDiscountScore,
