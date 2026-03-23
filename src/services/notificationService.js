@@ -11,7 +11,7 @@ class NotificationService {
     this.isProcessing = false;
     this.maxRetries = 3;
     this.lastSendTime = 0;
-    this.minGapMs = 15000; // 15 second minimum between sends
+    this.minGapMs = 2000; // 2 second minimum between sends
     this.sentDealIds = new Set(); // Track sent deals to avoid duplicates
   }
 
@@ -26,11 +26,33 @@ class NotificationService {
     
     if (dealId) this.sentDealIds.add(dealId);
     this.queue.push({ title, body, url });
-    
-    if (!this.isProcessing) {
-      this.processQueue();
-    }
     return true;
+  }
+
+  async flushQueue() {
+    if (this.queue.length === 0) return false;
+
+    const allNotifications = [...this.queue];
+    this.queue = [];
+
+    // Send in batches of 10 (Discord's max embeds per message)
+    const batchSize = 10;
+    let success = true;
+    for (let i = 0; i < allNotifications.length; i += batchSize) {
+      const batch = allNotifications.slice(i, i + batchSize);
+
+      // Respect minimum gap between sends
+      const timeSinceLastSend = Date.now() - this.lastSendTime;
+      if (this.lastSendTime > 0 && timeSinceLastSend < this.minGapMs) {
+        const waitTime = this.minGapMs - timeSinceLastSend;
+        logger.debug(`Waiting ${waitTime}ms before next batch to avoid rate limit...`);
+        await new Promise(resolve => setTimeout(resolve, waitTime));
+      }
+
+      const result = await this.sendBatchMessage(batch);
+      if (!result) success = false;
+    }
+    return success;
   }
 
   async processQueue() {
@@ -76,8 +98,11 @@ class NotificationService {
       const status = err.response?.status;
 
       if (status === 429 && attempt <= this.maxRetries) {
-        // Wait with increasing backoff
-        const waitMs = 60000 * attempt; // 60s, 120s, 180s
+        // Use Discord's actual retry_after value (in seconds), with a 2s floor and 30s cap
+        const retryAfterRaw = err.response?.data?.retry_after;
+        // Discord returns retry_after in seconds (as a float); convert to ms
+        const retryAfterMs = retryAfterRaw != null ? retryAfterRaw * 1000 : 2000;
+        const waitMs = Math.min(Math.max(retryAfterMs, 2000), 30000);
         logger.warn(`Discord rate-limited (429). Waiting ${waitMs}ms... (attempt ${attempt}/${this.maxRetries})`);
         await new Promise(resolve => setTimeout(resolve, waitMs));
         return this.sendBatchMessage(notifications, attempt + 1);
