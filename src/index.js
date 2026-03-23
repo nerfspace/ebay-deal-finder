@@ -67,11 +67,16 @@ async function runScan() {
     listingsChecked = listings.length;
     logger.scan(`Fetched ${listingsChecked} listings from eBay.`);
 
-    // Score all listings
-       // Score all listings with actual sold prices
+        // Score all listings with ACTUAL sold prices
     const scored = await Promise.all(listings.map(async (item) => {
-      const soldCheck = await ebayService.checkSoldItems(item.title, item.currentPrice, 0);
-      const actualSoldPrice = soldCheck.avgSoldPrice || null;
+      const soldCheck = await ebayService.checkSoldItems(
+        item.title,
+        item.currentPrice,
+        0  // Check for ANY sold items, don't filter by min difference yet
+      );
+      
+      // Use actual sold price if we found recently sold items
+      const actualSoldPrice = soldCheck.hasSoldItems ? soldCheck.recentlySoldPrice : null;
       return scoreItem(item, config.deals.minProfitThreshold, actualSoldPrice);
     }));
 
@@ -92,10 +97,10 @@ async function runScan() {
         await saveDeal(deal);
         dealsFound++;
 
-        logger.deal(
+                logger.deal(
           `NEW DEAL | Score: ${deal.dealScore}/100 | ` +
-                    `$${deal.currentPrice.toFixed(2)} → $${deal.estimatedResalePrice.toFixed(2)} (actual) | ` +
-          `Profit: ~$${deal.expectedProfit.toFixed(2)} | ` +
+          `Current: $${deal.currentPrice.toFixed(2)} → Recently Sold: $${deal.estimatedResalePrice.toFixed(2)} | ` +
+          `Profit: $${deal.expectedProfit.toFixed(2)} | ` +
           `"${deal.title.substring(0, 60)}"`,
         );
 
