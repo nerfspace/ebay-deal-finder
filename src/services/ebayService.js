@@ -131,4 +131,4 @@ class EbayService {
   }
 }
 
-module.exports = EbayService;
+module.exports = EbayService;
