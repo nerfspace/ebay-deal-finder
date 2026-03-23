@@ -111,30 +111,59 @@ class EbayService {
     }
   }
 
-  async checkSoldItems(title, currentPrice, minPriceDifference = 50, limit = 5) {
+  async checkSoldItems(title, currentPrice, minPriceDifference = 50, limit = 10) {
     try {
-      logger.debug(`Checking sold items for: "${title.substring(0, 50)}"`);
+      logger.debug(`Checking SOLD items for: "${title.substring(0, 50)}"`);
+      
+      // Search for SOLD items only, sorted by most recently completed
       const response = await axios.get(`${this.baseUrl}/item_summary/search`, {
-        headers: this._headers(),
-        params: { q: title, sort: 'newlyListed', limit, filter: 'buyingOptions:{SOLD}' },
+        headers: await this._headers(),
+        params: {
+          q: title,
+          sort: 'endingSoonest',  // This gives most recent sales
+          limit,
+          filter: 'buyingOptions:{SOLD}',
+        },
         timeout: 10000,
       });
+
       const itemSummaries = response.data.itemSummaries || [];
+      
       if (itemSummaries.length === 0) {
-        logger.debug(`No sold items found for: "${title.substring(0, 50)}"`);
-        return { hasSoldItems: false, avgSoldPrice: 0, priceDifference: 0, meetsThreshold: false };
+        logger.debug(`❌ NO SOLD ITEMS found for: "${title.substring(0, 50)}"`);
+        return { hasSoldItems: false, recentlySoldPrice: null, priceDifference: 0, meetsThreshold: false };
       }
-      const soldPrices = itemSummaries.map(item => item.price ? parseFloat(item.price.value) : 0).filter(price => price > 0);
-      const avgSoldPrice = soldPrices.length > 0 ? soldPrices.reduce((a, b) => a + b, 0) / soldPrices.length : 0;
-      const priceDifference = avgSoldPrice - currentPrice;
+
+      // Get the most recent sold price (first item in results)
+      const mostRecentSold = itemSummaries[0];
+      const recentlySoldPrice = mostRecentSold.price ? parseFloat(mostRecentSold.price.value) : null;
+
+      if (!recentlySoldPrice) {
+        logger.debug(`❌ Could not extract sold price for: "${title.substring(0, 50)}"`);
+        return { hasSoldItems: false, recentlySoldPrice: null, priceDifference: 0, meetsThreshold: false };
+      }
+
+      const priceDifference = recentlySoldPrice - currentPrice;
       const meetsThreshold = priceDifference >= minPriceDifference;
-      logger.debug(`Sold check: Found ${itemSummaries.length} | Avg: $${avgSoldPrice.toFixed(2)} | Current: $${currentPrice.toFixed(2)} | Diff: $${priceDifference.toFixed(2)} | Meets threshold: ${meetsThreshold ? 'YES' : 'NO'}`);
-      return { hasSoldItems: true, avgSoldPrice, priceDifference, meetsThreshold };
+
+      logger.debug(
+        `✅ Sold items found: ${itemSummaries.length} | ` +
+        `Most recent sold: $${recentlySoldPrice.toFixed(2)} | ` +
+        `Current listing: $${currentPrice.toFixed(2)} | ` +
+        `Difference: $${priceDifference.toFixed(2)} | ` +
+        `Meets threshold: ${meetsThreshold ? 'YES' : 'NO'}`
+      );
+
+      return {
+        hasSoldItems: true,
+        recentlySoldPrice,
+        priceDifference,
+        meetsThreshold,
+      };
     } catch (err) {
       logger.warn(`Error checking sold items: ${err.message}`);
-      return { hasSoldItems: false, avgSoldPrice: 0, priceDifference: 0, meetsThreshold: false };
+      return { hasSoldItems: false, recentlySoldPrice: null, priceDifference: 0, meetsThreshold: false };
     }
   }
-}
 
 module.exports = EbayService;
