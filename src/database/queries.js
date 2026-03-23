@@ -23,14 +23,17 @@ async function dealExists(ebayItemId) {
   return !!row;
 }
 
-async function saveDeal(deal) {
+async function saveDeal(deal, soldData) {
+  if (!soldData) soldData = {};
   const sql = `
     INSERT OR IGNORE INTO deals (
       ebay_item_id, title, current_price, estimated_resale_price, expected_profit,
-      deal_score, confidence_score, speed_score, risk_score, execution_score,
+      deal_score, price_discount_score, liquidity_score, seller_score, listing_quality_score,
+      speed_score, risk_score,
+      title_similarity, sold_match_count, sold_median_price,
       url, seller, seller_feedback, condition, listing_type,
       posted_at, found_at, notified_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `;
   const params = [
     deal.ebayItemId,
@@ -39,10 +42,15 @@ async function saveDeal(deal) {
     deal.estimatedResalePrice || null,
     deal.expectedProfit || null,
     deal.dealScore,
-    deal.confidenceScore,
-    deal.speedScore,
-    deal.riskScore,
-    deal.executionScore,
+    deal.priceDiscountScore || null,
+    deal.liquidityScore || null,
+    deal.sellerScore || null,
+    deal.listingQualityScore || null,
+    deal.speedScore || null,
+    deal.riskScore || null,
+    soldData.bestSimilarity != null ? soldData.bestSimilarity : null,
+    soldData.matchCount != null ? soldData.matchCount : null,
+    soldData.medianSoldPrice != null ? soldData.medianSoldPrice : null,
     deal.url,
     deal.seller || null,
     deal.sellerFeedback || null,

@@ -24,6 +24,7 @@ const notificationService = new NotificationService(config);
 const filterEngine = new FilterEngine({
   minDealScore: config.deals.minDealScore,
   minProfitThreshold: config.deals.minProfitThreshold,
+  minProfitPercentage: config.deals.minProfitPercentage,
   minSellerFeedbackPct: config.deals.minSellerFeedbackPct,
   binOnly: config.deals.binOnly,
 });
@@ -67,21 +68,41 @@ async function runScan() {
     listingsChecked = listings.length;
     logger.scan(`Fetched ${listingsChecked} listings from eBay.`);
 
-        // Score all listings with ACTUAL sold prices
-    const scored = await Promise.all(listings.map(async (item) => {
-      const soldCheck = await ebayService.checkSoldItems(
+    // Check market prices ONCE per listing and store results.
+    // Sequential calls with a short delay to avoid rate limiting.
+    logger.scan(`Checking market prices for ${listingsChecked} listings...`);
+    const soldDataMap = new Map();
+    for (const item of listings) {
+      const soldData = await ebayService.checkSoldItems(
         item.title,
         item.currentPrice,
-        0  // Check for ANY sold items, don't filter by min difference yet
+        config.deals.minProfitThreshold,
+        config.deals.soldItemsPerCheck,
       );
-      
-      // Use actual sold price if we found recently sold items
-      const actualSoldPrice = soldCheck.hasSoldItems ? soldCheck.recentlySoldPrice : null;
-      return scoreItem(item, config.deals.minProfitThreshold, actualSoldPrice);
-    }));
+      soldDataMap.set(item.ebayItemId, soldData);
+      await ebayService.delay(200);
+    }
 
-    // Filter to deals that meet minimum thresholds (capped at maxDealsPerScan)
-    const qualifyingDeals = await filterEngine.filterDeals(scored, ebayService);
+    // Score all listings using the pre-fetched market price data
+    const scored = listings.map((item) => {
+      const soldData = soldDataMap.get(item.ebayItemId);
+      const actualSoldPrice = soldData && soldData.hasSoldItems ? soldData.medianSoldPrice : null;
+      const soldMatchConfidence = soldData ? soldData.bestSimilarity : 0;
+      return scoreItem(item, config.deals.minProfitThreshold, actualSoldPrice, soldMatchConfidence);
+    });
+
+    // Filter to deals using the already-computed sold data (no second API call)
+    const qualifyingDeals = await filterEngine.filterDeals(scored, soldDataMap);
+
+    // Prioritize by: highest title similarity × largest profit percentage
+    qualifyingDeals.sort((a, b) => {
+      const soldA = soldDataMap.get(a.ebayItemId) || {};
+      const soldB = soldDataMap.get(b.ebayItemId) || {};
+      const priorityA = (soldA.bestSimilarity || 0) * (soldA.profitPercentage || 0);
+      const priorityB = (soldB.bestSimilarity || 0) * (soldB.profitPercentage || 0);
+      return priorityB - priorityA;
+    });
+
     logger.scan(`${qualifyingDeals.length} listing(s) passed deal filter.`);
 
     // Process each qualifying deal
@@ -94,18 +115,21 @@ async function runScan() {
         }
 
         // Persist deal to database
-        await saveDeal(deal);
+        const soldData = soldDataMap.get(deal.ebayItemId) || {};
+        await saveDeal(deal, soldData);
         dealsFound++;
 
                 logger.deal(
           `NEW DEAL | Score: ${deal.dealScore}/100 | ` +
-          `Current: $${deal.currentPrice.toFixed(2)} → Recently Sold: $${deal.estimatedResalePrice.toFixed(2)} | ` +
-          `Profit: $${deal.expectedProfit.toFixed(2)} | ` +
+          `Listed: $${deal.currentPrice.toFixed(2)} → Market: $${deal.estimatedResalePrice.toFixed(2)} | ` +
+          `Profit: $${deal.expectedProfit.toFixed(2)} (${soldData.profitPercentage ? soldData.profitPercentage.toFixed(1) + '%' : 'est.'}) | ` +
+          `Similarity: ${soldData.bestSimilarity ? (soldData.bestSimilarity * 100).toFixed(1) + '%' : 'N/A'} | ` +
+          `Matches: ${soldData.matchCount || 0} | ` +
           `"${deal.title.substring(0, 60)}"`,
         );
 
         // Send push notification
-        const sent = await notificationService.notifyDeal(deal);
+        const sent = await notificationService.notifyDeal(deal, soldData);
         if (sent) {
           await markNotified(deal.ebayItemId);
         }

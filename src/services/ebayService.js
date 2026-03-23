@@ -2,6 +2,26 @@
 
 const axios = require('axios');
 const logger = require('../utils/logger');
+const { titleSimilarity } = require('../utils/similarity');
+
+/**
+ * Compute the median of an array of prices, excluding outliers
+ * (values more than 2× the mean).
+ */
+function computeMedianPrice(prices) {
+  if (prices.length === 0) return 0;
+  if (prices.length === 1) return prices[0];
+
+  var mean = prices.reduce(function(sum, p) { return sum + p; }, 0) / prices.length;
+  var filtered = prices.filter(function(p) { return p <= mean * 2; });
+  var validPrices = filtered.length > 0 ? filtered : prices;
+
+  var sorted = validPrices.slice().sort(function(a, b) { return a - b; });
+  var mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 !== 0
+    ? sorted[mid]
+    : (sorted[mid - 1] + sorted[mid]) / 2;
+}
 
 const BROWSE_API_BASE = 'https://api.ebay.com/buy/browse/v1';
 const SANDBOX_API_BASE = 'https://api.sandbox.ebay.com/buy/browse/v1';
@@ -16,6 +36,8 @@ class EbayService {
     this.condition = config.scan.condition || 'NEW';
     this.minPrice = config.scan.minPrice || 10;
     this.maxPrice = config.scan.maxPrice || 5000;
+    this.minTitleSimilarity = config.deals.minTitleSimilarity || 0.95;
+    this.soldItemsPerCheck = config.deals.soldItemsPerCheck || 10;
   }
 
   async _headers() {
@@ -137,51 +159,89 @@ class EbayService {
 
   async checkSoldItems(title, currentPrice, minPriceDifference, limit) {
     if (!minPriceDifference) minPriceDifference = 50;
-    if (!limit) limit = 10;
+    if (!limit) limit = this.soldItemsPerCheck;
+
+    var emptyResult = { hasSoldItems: false, medianSoldPrice: null, matchCount: 0, bestSimilarity: 0, priceDifference: 0, profitPercentage: 0, meetsThreshold: false };
 
     try {
-      logger.debug('Checking SOLD items for: "' + title.substring(0, 50) + '"');
-      
-      const response = await axios.get(this.baseUrl + '/item_summary/search', {
+      logger.debug('Checking market prices for: "' + title.substring(0, 50) + '"');
+
+      // The Browse API does not support buyingOptions:{SOLD}. Instead we search
+      // active listings with the same title and use their prices as market price.
+      // Items that match the listing title with ≥95% similarity give us a reliable
+      // market price to compare against.
+      var response = await axios.get(this.baseUrl + '/item_summary/search', {
         headers: await this._headers(),
         params: {
           q: title,
-          sort: 'endingSoonest',
+          sort: 'price',
           limit: limit,
-          filter: 'buyingOptions:{SOLD}',
+          filter: 'priceCurrency:USD',
         },
         timeout: 10000,
       });
 
-      const itemSummaries = response.data.itemSummaries || [];
-      
+      var itemSummaries = response.data.itemSummaries || [];
+
       if (itemSummaries.length === 0) {
-        logger.debug('NO SOLD ITEMS found for: "' + title.substring(0, 50) + '"');
-        return { hasSoldItems: false, recentlySoldPrice: null, priceDifference: 0, meetsThreshold: false };
+        logger.debug('No market items found for: "' + title.substring(0, 50) + '"');
+        return emptyResult;
       }
 
-      const mostRecentSold = itemSummaries[0];
-      const recentlySoldPrice = mostRecentSold.price ? parseFloat(mostRecentSold.price.value) : null;
+      // Filter items by title similarity threshold
+      var matchingPrices = [];
+      var bestSimilarity = 0;
 
-      if (!recentlySoldPrice) {
-        logger.debug('Could not extract sold price for: "' + title.substring(0, 50) + '"');
-        return { hasSoldItems: false, recentlySoldPrice: null, priceDifference: 0, meetsThreshold: false };
+      for (var i = 0; i < itemSummaries.length; i++) {
+        var soldItem = itemSummaries[i];
+        var soldTitle = soldItem.title || '';
+        var similarity = titleSimilarity(title, soldTitle);
+
+        if (similarity > bestSimilarity) {
+          bestSimilarity = similarity;
+        }
+
+        if (similarity >= this.minTitleSimilarity) {
+          var price = soldItem.price ? parseFloat(soldItem.price.value) : null;
+          if (price && price > 0) {
+            matchingPrices.push(price);
+          }
+        }
       }
 
-      const priceDifference = recentlySoldPrice - currentPrice;
-      const meetsThreshold = priceDifference >= minPriceDifference;
+      if (matchingPrices.length === 0) {
+        logger.debug(
+          'No matching market items (best similarity: ' + (bestSimilarity * 100).toFixed(1) + '%) for: "' +
+          title.substring(0, 50) + '"'
+        );
+        return Object.assign({}, emptyResult, { bestSimilarity: bestSimilarity });
+      }
 
-      logger.debug('Sold items found: ' + itemSummaries.length + ' | Most recent sold: $' + recentlySoldPrice.toFixed(2) + ' | Current listing: $' + currentPrice.toFixed(2) + ' | Difference: $' + priceDifference.toFixed(2) + ' | Meets threshold: ' + (meetsThreshold ? 'YES' : 'NO'));
+      var medianSoldPrice = computeMedianPrice(matchingPrices);
+      var priceDifference = medianSoldPrice - currentPrice;
+      var profitPercentage = currentPrice > 0 ? (priceDifference / currentPrice) * 100 : 0;
+      var meetsThreshold = priceDifference >= minPriceDifference;
+
+      logger.debug(
+        'Market check: ' + matchingPrices.length + ' matches | Median: $' + medianSoldPrice.toFixed(2) +
+        ' | Listed: $' + currentPrice.toFixed(2) +
+        ' | Diff: $' + priceDifference.toFixed(2) +
+        ' | Margin: ' + profitPercentage.toFixed(1) + '%' +
+        ' | Best similarity: ' + (bestSimilarity * 100).toFixed(1) + '%'
+      );
 
       return {
         hasSoldItems: true,
-        recentlySoldPrice: recentlySoldPrice,
+        medianSoldPrice: medianSoldPrice,
+        matchCount: matchingPrices.length,
+        bestSimilarity: bestSimilarity,
         priceDifference: priceDifference,
+        profitPercentage: profitPercentage,
         meetsThreshold: meetsThreshold,
       };
     } catch (err) {
-      logger.warn('Error checking sold items: ' + err.message);
-      return { hasSoldItems: false, recentlySoldPrice: null, priceDifference: 0, meetsThreshold: false };
+      logger.warn('Error checking market prices: ' + err.message);
+      return emptyResult;
     }
   }
 }

@@ -246,11 +246,31 @@ function calcRiskScore(item) {
 /**
  * Score a single eBay listing across all 6 dimensions.
  * Returns the enriched item with all score fields populated.
+ *
+ * @param {object} item - The listing to score
+ * @param {number} minProfitThreshold - Minimum absolute profit required
+ * @param {number|null} actualSoldPrice - Verified market/sold price (or null to estimate)
+ * @param {number} soldMatchConfidence - Best title similarity from sold-item check (0–1)
  */
-function scoreItem(item, minProfitThreshold, actualSoldPrice = null) {
+function scoreItem(item, minProfitThreshold, actualSoldPrice, soldMatchConfidence) {
+  if (actualSoldPrice === undefined) actualSoldPrice = null;
+  if (soldMatchConfidence === undefined) soldMatchConfidence = 0;
+
   // Use actual sold price if available, otherwise estimate
   const resalePrice = actualSoldPrice || estimateResalePrice(item);
   const expectedProfit = Math.max(0, resalePrice - item.currentPrice);
+
+  // When we have a verified sold match (≥95% title similarity), boost the
+  // priceDiscount weight since we have hard price evidence. Redistribute the
+  // increase away from liquidity, listingQuality, and speed (each reduced by 0.05).
+  const weights = soldMatchConfidence >= 0.95
+    ? Object.assign({}, WEIGHTS, {
+        priceDiscount:  WEIGHTS.priceDiscount  + 0.15,
+        liquidity:      WEIGHTS.liquidity      - 0.05,
+        listingQuality: WEIGHTS.listingQuality - 0.05,
+        speed:          WEIGHTS.speed          - 0.05,
+      })
+    : WEIGHTS;
 
   const priceDiscountScore  = calcPriceDiscountScore(item.currentPrice, resalePrice, minProfitThreshold);
   const liquidityScore      = calcLiquidityScore(item);
@@ -260,12 +280,12 @@ function scoreItem(item, minProfitThreshold, actualSoldPrice = null) {
   const riskScore           = calcRiskScore(item);
 
   const dealScore = Math.round(
-    priceDiscountScore  * WEIGHTS.priceDiscount +
-    liquidityScore      * WEIGHTS.liquidity +
-    sellerScore         * WEIGHTS.seller +
-    listingQualityScore * WEIGHTS.listingQuality +
-    speedScore          * WEIGHTS.speed -
-    riskScore           * WEIGHTS.risk,
+    priceDiscountScore  * weights.priceDiscount +
+    liquidityScore      * weights.liquidity +
+    sellerScore         * weights.seller +
+    listingQualityScore * weights.listingQuality +
+    speedScore          * weights.speed -
+    riskScore           * weights.risk,
   );
 
   return {
@@ -279,6 +299,7 @@ function scoreItem(item, minProfitThreshold, actualSoldPrice = null) {
     listingQualityScore,
     speedScore,
     riskScore,
+    soldMatchConfidence,
   };
 }
 
