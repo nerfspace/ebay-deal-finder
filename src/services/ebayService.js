@@ -61,5 +61,74 @@ class EbayService {
         throw err;
       }
     }
-    logger.debug(`Fetched ${listings.length} NEW listings from eBay.`);*
-
+    logger.debug(`Fetched ${listings.length} NEW listings from eBay.`);
+    return listings;
+  }
+
+  _normalizeItem(item) {
+    const price = item.price ? parseFloat(item.price.value) : 0;
+    const sellerFeedback = item.seller && item.seller.feedbackScore ? parseInt(item.seller.feedbackScore, 10) : null;
+    const sellerFeedbackPct = item.seller && item.seller.feedbackPercentage ? parseFloat(item.seller.feedbackPercentage) : null;
+    return {
+      ebayItemId: item.itemId,
+      title: item.title || '',
+      currentPrice: price,
+      currency: item.price ? item.price.currency : 'USD',
+      url: item.itemWebUrl || '',
+      condition: item.condition || 'Unknown',
+      listingType: item.buyingOptions ? item.buyingOptions[0] : 'FIXED_PRICE',
+      seller: item.seller ? item.seller.username : null,
+      sellerFeedback,
+      sellerFeedbackPct,
+      categoryId: item.categories ? item.categories[0]?.categoryId : null,
+      categoryName: item.categories ? item.categories[0]?.categoryName : null,
+      imageUrl: item.image ? item.image.imageUrl : null,
+      postedAt: item.itemCreationDate || null,
+    };
+  }
+
+  async checkSellerSize(item, maxSellerSales = 100) {
+    try {
+      const sellerName = item.seller;
+      const feedbackScore = item.sellerFeedback;
+      if (!sellerName || !feedbackScore) {
+        logger.debug(`Seller info missing for: "${item.title.substring(0, 50)}"`);
+        return { isSmallSeller: false, totalSales: 0, reason: 'No seller data' };
+      }
+      logger.debug(`Checking seller size for: ${sellerName} (feedback: ${feedbackScore})`);
+      const isSmallSeller = feedbackScore <= maxSellerSales;
+      logger.debug(`Seller: ${sellerName} | Total sales: ${feedbackScore} | Small seller (≤${maxSellerSales}): ${isSmallSeller ? 'YES' : 'NO'}`);
+      return { isSmallSeller, totalSales: feedbackScore, reason: isSmallSeller ? 'Small seller' : `Too many sales (${feedbackScore})` };
+    } catch (err) {
+      logger.warn(`Error checking seller size: ${err.message}`);
+      return { isSmallSeller: false, totalSales: 0, reason: 'Error' };
+    }
+  }
+
+  async checkSoldItems(title, currentPrice, minPriceDifference = 50, limit = 5) {
+    try {
+      logger.debug(`Checking sold items for: "${title.substring(0, 50)}"`);
+      const response = await axios.get(`${this.baseUrl}/item_summary/search`, {
+        headers: this._headers(),
+        params: { q: title, sort: 'newlyListed', limit, filter: 'buyingOptions:{SOLD}' },
+        timeout: 10000,
+      });
+      const itemSummaries = response.data.itemSummaries || [];
+      if (itemSummaries.length === 0) {
+        logger.debug(`No sold items found for: "${title.substring(0, 50)}"`);
+        return { hasSoldItems: false, avgSoldPrice: 0, priceDifference: 0, meetsThreshold: false };
+      }
+      const soldPrices = itemSummaries.map(item => item.price ? parseFloat(item.price.value) : 0).filter(price => price > 0);
+      const avgSoldPrice = soldPrices.length > 0 ? soldPrices.reduce((a, b) => a + b, 0) / soldPrices.length : 0;
+      const priceDifference = avgSoldPrice - currentPrice;
+      const meetsThreshold = priceDifference >= minPriceDifference;
+      logger.debug(`Sold check: Found ${itemSummaries.length} | Avg: $${avgSoldPrice.toFixed(2)} | Current: $${currentPrice.toFixed(2)} | Diff: $${priceDifference.toFixed(2)} | Meets threshold: ${meetsThreshold ? 'YES' : 'NO'}`);
+      return { hasSoldItems: true, avgSoldPrice, priceDifference, meetsThreshold };
+    } catch (err) {
+      logger.warn(`Error checking sold items: ${err.message}`);
+      return { hasSoldItems: false, avgSoldPrice: 0, priceDifference: 0, meetsThreshold: false };
+    }
+  }
+}
+
+module.exports = EbayService;
