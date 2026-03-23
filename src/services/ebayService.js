@@ -25,7 +25,10 @@ class EbayService {
       'X-EBAY-C-MARKETPLACE-ID': 'EBAY_US',
     };
   }
-
+  async delay(ms) {
+    return new Promise(function(resolve) { setTimeout(resolve, ms); });
+  }
+  
   async fetchRecentListings(total = 500) {
     var listings = [];
     var offset = 0;
@@ -73,7 +76,9 @@ class EbayService {
 
           listings.push.apply(listings, itemSummaries.map(this._normalizeItem.bind(this)));
           offset = offset + itemSummaries.length;
-
+          
+          await this.delay(1500);
+          
           if (offset >= apiTotal || listings.length >= total) {
             break;
           }
