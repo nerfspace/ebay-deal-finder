@@ -16,6 +16,7 @@ const DEFAULT_EXCLUDE_KEYWORDS = [
 class FilterEngine {
   constructor(options = {}) {
     this.minSellerFeedbackPct = options.minSellerFeedbackPct || 95;
+    this.minPriceDifference = options.minPriceDifference || 50; // NEW: $50 minimum
     this.binOnly = options.binOnly !== false;
     this.excludeKeywords = new Set(DEFAULT_EXCLUDE_KEYWORDS);
   }
@@ -63,7 +64,8 @@ class FilterEngine {
    * 2. Seller Feedback: Must be >= 95%
    * 3. High-Value Category: Must match known profitable categories
    * 4. Exclude Keywords: Must NOT contain banned keywords
-   * 5. Sold Items Validation: Must have recently sold items to confirm demand
+   * 5. Sold Items Validation: Must have recently sold items
+   * 6. Price Difference: Must have >= $50 difference from sold price
    */
   async filterDeals(items, ebayService) {
     const passing = [];
@@ -73,6 +75,7 @@ class FilterEngine {
       notHighValue: 0,
       excludedKeyword: 0,
       noSoldItems: 0,
+      insufficientPriceDifference: 0,
     };
 
     for (const item of items) {
@@ -107,12 +110,26 @@ class FilterEngine {
         continue;
       }
 
-      // 5. CHECK FOR RECENTLY SOLD ITEMS (validates market demand)
+      // 5 & 6. CHECK SOLD ITEMS AND PRICE DIFFERENCE
       if (ebayService) {
-        const hasSoldItems = await ebayService.checkSoldItems(item.title);
-        if (!hasSoldItems) {
+        const soldCheck = await ebayService.checkSoldItems(
+          item.title,
+          item.currentPrice,
+          this.minPriceDifference
+        );
+
+        if (!soldCheck.hasSoldItems) {
           logger.debug(`[SKIP] No sold items found: "${item.title.substring(0, 50)}"`);
           skipped.noSoldItems++;
+          continue;
+        }
+
+        if (!soldCheck.meetsThreshold) {
+          logger.debug(
+            `[SKIP] Price difference too low ($${soldCheck.priceDifference.toFixed(2)} < $${this.minPriceDifference}): ` +
+            `"${item.title.substring(0, 50)}"`
+          );
+          skipped.insufficientPriceDifference++;
           continue;
         }
       }
@@ -130,6 +147,7 @@ class FilterEngine {
     logger.info(`Not high-value skipped: ${skipped.notHighValue}`);
     logger.info(`Excluded keywords skipped: ${skipped.excludedKeyword}`);
     logger.info(`No sold items skipped: ${skipped.noSoldItems}`);
+    logger.info(`Insufficient price difference skipped: ${skipped.insufficientPriceDifference}`);
     logger.info(`Output: ${passing.length} deals passed`);
 
     return passing;
