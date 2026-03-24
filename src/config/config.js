@@ -51,6 +51,31 @@ minDealScore: parseInt(process.env.MIN_DEAL_SCORE || '70', 10),
   logging: {
     level: process.env.LOG_LEVEL || 'info',
   },
+  auctionSources: {
+    enabled: process.env.AUCTION_SOURCES_ENABLED !== 'false',
+    minTitleSimilarity: parseFloat(process.env.AUCTION_MIN_TITLE_SIMILARITY || '0.80'),
+    minProfitPercentage: parseFloat(process.env.AUCTION_MIN_PROFIT_PCT || '20'),
+    shopGoodwill: {
+      enabled: process.env.SHOPGOODWILL_ENABLED !== 'false',
+      delayMs: 2500,
+    },
+    govDeals: {
+      enabled: process.env.GOVDEALS_ENABLED !== 'false',
+      delayMs: 3000,
+    },
+    propertyRoom: {
+      enabled: process.env.PROPERTYROOM_ENABLED !== 'false',
+      delayMs: 3000,
+    },
+    heritage: {
+      enabled: process.env.HERITAGE_ENABLED !== 'false',
+      delayMs: 3000,
+    },
+    bidSpotter: {
+      enabled: process.env.BIDSPOTTER_ENABLED !== 'false',
+      delayMs: 3000,
+    },
+  },
 };
 
 validate();

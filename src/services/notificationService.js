@@ -144,6 +144,58 @@ class NotificationService {
 
     return this.queueNotification(title, body, deal.url, deal.ebayItemId);
   }
+
+  async notifyAuctionDeal(item, window) {
+    if (!this.enabled) return false;
+
+    const dealId = item.sourceId;
+    if (this.sentDealIds.has(dealId)) {
+      logger.debug(`Skipping duplicate auction deal notification: ${dealId}`);
+      return false;
+    }
+    this.sentDealIds.add(dealId);
+
+    const urgencyLabel = `${window.emoji} ${window.label} | ${item.source}`;
+    const title = `${urgencyLabel}\n📦 ${item.title.substring(0, 80)}`;
+
+    const medianPrice = item.ebayMedianSoldPrice != null
+      ? `$${item.ebayMedianSoldPrice.toFixed(2)} (median of ${item.ebayMatchCount} comp${item.ebayMatchCount !== 1 ? 's' : ''})`
+      : 'N/A';
+
+    const profit = item.projectedProfit != null
+      ? `$${item.projectedProfit.toFixed(2)} (${item.profitPercentage != null ? item.profitPercentage.toFixed(0) : '?'}%)`
+      : 'N/A';
+
+    const similarity = item.titleSimilarity != null
+      ? `${(item.titleSimilarity * 100).toFixed(1)}%`
+      : 'N/A';
+
+    const timeLeft = item.timeLeftMinutes != null
+      ? this._formatTimeLeft(item.timeLeftMinutes)
+      : 'Unknown';
+
+    const body =
+      `💰 **Current Bid:** $${item.currentBid.toFixed(2)}\n` +
+      `📈 **eBay Sold Price:** ${medianPrice}\n` +
+      `💵 **Projected Profit:** ${profit}\n` +
+      `🔍 **Title Match:** ${similarity}\n` +
+      `⏰ **Ends:** ${timeLeft}\n` +
+      `🔗 [Bid Now](${item.url})`;
+
+    this.queue.push({ title, body, url: item.url });
+    return true;
+  }
+
+  _formatTimeLeft(minutes) {
+    if (minutes < 1) return 'less than 1m';
+    if (minutes < 60) return `${minutes}m`;
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    if (h < 24) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+    const d = Math.floor(h / 24);
+    const hRem = h % 24;
+    return hRem > 0 ? `${d}d ${hRem}h` : `${d}d`;
+  }
 }
 
 module.exports = NotificationService;
