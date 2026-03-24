@@ -6,8 +6,6 @@ const logger = require('../../utils/logger');
 
 const BASE_URL = 'https://buyerapi.shopgoodwill.com/api/Search/ItemListing';
 
-const MAX_SEARCH_PRICE = 999999;
-
 const DEFAULT_HEADERS = {
   'Content-Type': 'application/json',
   'Accept': 'application/json',
@@ -62,23 +60,36 @@ class ShopGoodwillSource extends BaseAuctionSource {
   async _fetchPage(keyword, timeWindowMinutes) {
     const body = {
       searchText: keyword,
-      searchInDescription: false,
-      selectedCategoryIds: [],
-      selectedSellerIds: [],
-      lowPrice: 0,
-      highPrice: MAX_SEARCH_PRICE,
-      sortColumn: 'EndingDate',
-      sortOrder: 'a',
-      page: 1,
-      pageSize: 40,
-      categoryLevelNo: 1,
-      searchCategoryLevel: 0,
-      closedAuctionEndingDate: '',
-      closedAuctionDaysBack: 0,
-      buyNowOnly: false,
-      selectedLocationIds: [],
-      savedSearchName: '',
-      isFeaturedSearch: false,
+      searchDescriptions: "false",
+      selectedCategoryIds: "",
+      selectedSellerIds: "",
+      selectedGroup: "",
+      lowPrice: "0",
+      highPrice: "999999",
+      searchBuyNowOnly: "",
+      searchPickupOnly: "false",
+      searchNoPickupOnly: "false",
+      searchOneCentShippingOnly: "false",
+      searchClosedAuctions: "false",
+      closedAuctionEndingDate: "",
+      closedAuctionDaysBack: "7",
+      searchCanadaShipping: "false",
+      searchInternationalShippingOnly: "false",
+      searchUSOnlyShipping: "false",
+      sortColumn: "1",
+      sortDescending: "false",
+      savedSearchId: 0,
+      useBuyerPrefs: "true",
+      categoryLevelNo: "1",
+      categoryLevel: 1,
+      categoryId: 0,
+      partNumber: "",
+      catIds: "",
+      isSize: false,
+      isWeddingCatagory: "false",
+      isMultipleCategoryIds: false,
+      isFromHeaderMenuTab: false,
+      layout: "",
     };
 
     const response = await axios.post(BASE_URL, body, {
