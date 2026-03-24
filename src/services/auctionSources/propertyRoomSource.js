@@ -9,9 +9,11 @@ const logger = require('../../utils/logger');
 const SEARCH_BASE = 'https://www.propertyroom.com/search';
 
 const HEADERS = {
-  'User-Agent': 'ebay-deal-finder/1.0 (auction-scanner)',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-  'Accept-Language': 'en-US,en;q=0.5',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Connection': 'keep-alive',
+  'Upgrade-Insecure-Requests': '1',
 };
 
 class PropertyRoomSource extends BaseAuctionSource {
@@ -61,6 +63,8 @@ class PropertyRoomSource extends BaseAuctionSource {
       timeout: 15000,
     });
 
+    logger.debug(`[${this.name}] Response status: ${response.status}, content-type: ${response.headers['content-type']}, size: ${(response.data || '').length} bytes`);
+
     return this._parseHtml(response.data, timeWindowMinutes);
   }
 
@@ -68,8 +72,32 @@ class PropertyRoomSource extends BaseAuctionSource {
     const $ = cheerio.load(html);
     const items = [];
 
-    // PropertyRoom listing cards — selectors may need updating if site layout changes
-    $('[class*="listing"], [class*="item-card"], article').each((_, el) => {
+    // Try broad selectors — PropertyRoom may use various class names
+    const SELECTORS = [
+      '[class*="listing"]',
+      '[class*="item-card"]',
+      '[class*="product-card"]',
+      '[class*="auction-item"]',
+      '[class*="grid-item"]',
+      'article',
+      '.lot',
+    ];
+
+    let matched = 0;
+    for (const sel of SELECTORS) {
+      const count = $(sel).length;
+      if (count > 0) {
+        logger.debug(`[${this.name}] Selector "${sel}" matched ${count} elements`);
+        matched += count;
+      }
+    }
+
+    if (matched === 0) {
+      logger.debug(`[${this.name}] 0 elements matched any selector. HTML sample: ${String(html).slice(0, 500)}`);
+    }
+
+    // Use the combined set of selectors
+    $(SELECTORS.join(', ')).each((_, el) => {
       try {
         const $el = $(el);
 
@@ -123,16 +151,12 @@ class PropertyRoomSource extends BaseAuctionSource {
       }
     });
 
+    if (items.length > 0) {
+      logger.debug(`[${this.name}] First item sample: ${JSON.stringify(items[0]).slice(0, 200)}`);
+    }
+
     return items;
   }
-
-  /**
-   * Parse human-readable time remaining string into total minutes.
-   * Handles formats like: "2h 15m", "5m", "1d 3h 20m", "45s", "Ending Soon"
-   *
-   * @param {string} text
-   * @returns {number|null} Total minutes, or null if unparseable
-   */
   _parseTimeRemaining(text) {
     if (!text) return null;
 

@@ -55,6 +55,7 @@ minDealScore: parseInt(process.env.MIN_DEAL_SCORE || '70', 10),
     enabled: process.env.AUCTION_SOURCES_ENABLED !== 'false',
     minTitleSimilarity: parseFloat(process.env.AUCTION_MIN_TITLE_SIMILARITY || '0.80'),
     minProfitPercentage: parseFloat(process.env.AUCTION_MIN_PROFIT_PCT || '20'),
+    keywords: (process.env.AUCTION_KEYWORDS || 'electronics,camera,laptop,jewelry,watches,coins,tools,vintage,gaming,audio').split(',').map((k) => k.trim()).filter(Boolean),
     shopGoodwill: {
       enabled: process.env.SHOPGOODWILL_ENABLED !== 'false',
       delayMs: 2500,

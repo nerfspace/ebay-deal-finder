@@ -9,9 +9,11 @@ const logger = require('../../utils/logger');
 const SEARCH_BASE = 'https://www.bidspotter.com/en-us/search';
 
 const HEADERS = {
-  'User-Agent': 'ebay-deal-finder/1.0 (auction-scanner)',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-  'Accept-Language': 'en-US,en;q=0.5',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Connection': 'keep-alive',
+  'Upgrade-Insecure-Requests': '1',
 };
 
 class BidSpotterSource extends BaseAuctionSource {
@@ -61,15 +63,39 @@ class BidSpotterSource extends BaseAuctionSource {
       timeout: 15000,
     });
 
-    return this._parseHtml(response.data, timeWindowMinutes);
+    logger.debug(`[${this.name}] Response status: ${response.status}, content-type: ${response.headers['content-type']}, size: ${(response.data || '').length} bytes`);
+
+    const items = this._parseHtml(response.data, timeWindowMinutes);
+
+    if (items.length === 0) {
+      logger.debug(`[${this.name}] 0 items parsed for keyword "${keyword}". HTML sample: ${String(response.data).slice(0, 500)}`);
+    } else {
+      logger.debug(`[${this.name}] First item sample: ${JSON.stringify(items[0]).slice(0, 200)}`);
+    }
+
+    return items;
   }
 
   _parseHtml(html, timeWindowMinutes) {
     const $ = cheerio.load(html);
     const items = [];
 
-    // BidSpotter lot listing selectors
-    $('[class*="lot"], [class*="item-card"], [class*="result-item"], article').each((_, el) => {
+    // BidSpotter lot listing selectors — log match counts for debugging
+    const SELECTORS = [
+      '[class*="lot"]',
+      '[class*="item-card"]',
+      '[class*="result-item"]',
+      'article',
+    ];
+
+    for (const sel of SELECTORS) {
+      const count = $(sel).length;
+      if (count > 0) {
+        logger.debug(`[${this.name}] Selector "${sel}" matched ${count} elements`);
+      }
+    }
+
+    $(SELECTORS.join(', ')).each((_, el) => {
       try {
         const $el = $(el);
 
