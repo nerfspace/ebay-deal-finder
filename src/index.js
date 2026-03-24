@@ -10,11 +10,15 @@ const {
   markNotified,
   saveScanHistory,
   getFilterKeywords,
+  auctionDealExists,
+  saveAuctionDeal,
 } = require('./database/queries');
 const EbayService = require('./services/ebayService');
 const { scoreItem } = require('./services/scoringEngine');
 const FilterEngine = require('./services/filterEngine');
 const NotificationService = require('./services/notificationService');
+const AuctionScanner = require('./services/auctionScanner');
+const { createSources } = require('./services/auctionSources');
 const ebayWebhookRouter = require('./routes/ebayWebhook');
 
 logger.setLevel(config.logging.level);
@@ -197,10 +201,10 @@ async function main() {
     logger.info(`[WEBHOOK] Ready to receive eBay notifications at /ebay/notification`);
   });
 
-  // Run initial scan immediately
+  // Run initial eBay scan immediately
   await runScan();
 
-  // Schedule recurring scans
+  // Schedule recurring eBay scans
   const intervalMs = config.scan.intervalMinutes * 60 * 1000;
   const intervalId = setInterval(async () => {
     try {
@@ -212,10 +216,27 @@ async function main() {
 
   logger.info(`Next scan in ${config.scan.intervalMinutes} minutes.`);
 
+  // Initialize and start the multi-source auction scanner (if enabled)
+  let auctionScanner = null;
+  if (config.auctionSources && config.auctionSources.enabled) {
+    const auctionSources = createSources(config.auctionSources);
+    auctionScanner = new AuctionScanner(
+      config,
+      ebayService,
+      notificationService,
+      auctionSources,
+      { auctionDealExists, saveAuctionDeal },
+    );
+    auctionScanner.start();
+  } else {
+    logger.info('[AuctionScanner] Disabled via config (AUCTION_SOURCES_ENABLED=false).');
+  }
+
   // Graceful shutdown
   async function shutdown(signal) {
     logger.info(`Received ${signal}. Shutting down gracefully...`);
     clearInterval(intervalId);
+    if (auctionScanner) auctionScanner.stop();
     await closeDb();
     logger.info('Shutdown complete.');
     process.exit(0);

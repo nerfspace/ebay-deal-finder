@@ -49,6 +49,27 @@ CREATE TABLE IF NOT EXISTS scan_history (
   deals_found INTEGER NOT NULL DEFAULT 0,
   errors INTEGER NOT NULL DEFAULT 0
 );
+
+CREATE TABLE IF NOT EXISTS auction_deals (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  source_id TEXT UNIQUE NOT NULL,
+  source TEXT NOT NULL,
+  title TEXT NOT NULL,
+  current_bid REAL NOT NULL,
+  end_time TEXT,
+  time_left_minutes INTEGER,
+  url TEXT,
+  image_url TEXT,
+  category TEXT,
+  bid_count INTEGER DEFAULT 0,
+  ebay_median_sold_price REAL,
+  projected_profit REAL,
+  profit_percentage REAL,
+  title_similarity REAL,
+  ebay_match_count INTEGER DEFAULT 0,
+  found_at TEXT NOT NULL,
+  notified_at TEXT
+);
 `;
 
 function initDb(dbPath) {

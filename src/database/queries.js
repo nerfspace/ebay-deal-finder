@@ -108,6 +108,49 @@ async function addFilterKeyword(keyword, filterType, priority = 1) {
   );
 }
 
+async function auctionDealExists(sourceId) {
+  const row = await get('SELECT id FROM auction_deals WHERE source_id = ?', [sourceId]);
+  return !!row;
+}
+
+async function saveAuctionDeal(item) {
+  const sql = `
+    INSERT OR IGNORE INTO auction_deals (
+      source_id, source, title, current_bid, end_time, time_left_minutes,
+      url, image_url, category, bid_count,
+      ebay_median_sold_price, projected_profit, profit_percentage,
+      title_similarity, ebay_match_count, found_at, notified_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `;
+  const params = [
+    item.sourceId,
+    item.source,
+    item.title,
+    item.currentBid,
+    item.endTime || null,
+    item.timeLeftMinutes != null ? item.timeLeftMinutes : null,
+    item.url || null,
+    item.imageUrl || null,
+    item.category || null,
+    item.bidCount || 0,
+    item.ebayMedianSoldPrice != null ? item.ebayMedianSoldPrice : null,
+    item.projectedProfit != null ? item.projectedProfit : null,
+    item.profitPercentage != null ? item.profitPercentage : null,
+    item.titleSimilarity != null ? item.titleSimilarity : null,
+    item.ebayMatchCount || 0,
+    moment().toISOString(),
+    null,
+  ];
+  return run(sql, params);
+}
+
+async function markAuctionDealNotified(sourceId) {
+  return run('UPDATE auction_deals SET notified_at = ? WHERE source_id = ?', [
+    moment().toISOString(),
+    sourceId,
+  ]);
+}
+
 module.exports = {
   dealExists,
   saveDeal,
@@ -117,4 +160,7 @@ module.exports = {
   getScanHistory,
   getFilterKeywords,
   addFilterKeyword,
+  auctionDealExists,
+  saveAuctionDeal,
+  markAuctionDealNotified,
 };
