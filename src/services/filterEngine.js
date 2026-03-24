@@ -44,6 +44,52 @@ class FilterEngine {
   }
 
   /**
+   * Pre-filter listings before making any sold-item API calls.
+   * Removes auctions, low-feedback sellers, and excluded-keyword items.
+   * Returns only listings worth spending API quota on.
+   *
+   * @param {object[]} items - Raw/normalized listing objects
+   * @returns {object[]} Filtered listings
+   */
+  preFilter(items) {
+    var passing = [];
+    var skipped = { auction: 0, lowFeedback: 0, excludedKeyword: 0 };
+
+    for (var idx = 0; idx < items.length; idx++) {
+      var item = items[idx];
+
+      if (this.binOnly) {
+        var lt = (item.listingType || '').toUpperCase();
+        if (lt === 'AUCTION') {
+          skipped.auction++;
+          continue;
+        }
+      }
+
+      if (item.sellerFeedbackPct != null && item.sellerFeedbackPct < this.minSellerFeedbackPct) {
+        skipped.lowFeedback++;
+        continue;
+      }
+
+      if (this.isExcluded(item.title)) {
+        skipped.excludedKeyword++;
+        continue;
+      }
+
+      passing.push(item);
+    }
+
+    logger.debug(
+      'Pre-filter: ' + items.length + ' → ' + passing.length +
+      ' (auctions: ' + skipped.auction +
+      ', low feedback: ' + skipped.lowFeedback +
+      ', excluded keywords: ' + skipped.excludedKeyword + ')'
+    );
+
+    return passing;
+  }
+
+  /**
    * Filter a list of scored items to qualifying deals.
    *
    * @param {object[]} items - Scored listing objects
