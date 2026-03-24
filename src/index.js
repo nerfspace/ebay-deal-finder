@@ -68,11 +68,24 @@ async function runScan() {
     listingsChecked = listings.length;
     logger.scan(`Fetched ${listingsChecked} listings from eBay.`);
 
+    // Pre-filter BEFORE making sold-item API calls to reduce the number of
+    // expensive API requests (remove auctions, low-feedback sellers, bad keywords).
+    const preFiltered = filterEngine.preFilter(listings);
+    logger.scan(`Pre-filter: ${preFiltered.length}/${listingsChecked} listings remain after basic filters.`);
+
+    // Cap the number of sold-item lookups per scan to stay within eBay rate limits.
+    const maxChecks = config.deals.maxSoldChecksPerScan;
+    const toCheck = preFiltered.slice(0, maxChecks);
+    if (preFiltered.length > maxChecks) {
+      logger.scan(`Capping sold-item checks at ${maxChecks} (${preFiltered.length - maxChecks} skipped).`);
+    }
+
     // Check market prices ONCE per listing and store results.
-    // Sequential calls with a short delay to avoid rate limiting.
-    logger.scan(`Checking market prices for ${listingsChecked} listings...`);
+    // Sequential calls with a proper delay to avoid rate limiting.
+    logger.scan(`Checking market prices for ${toCheck.length} listings...`);
     const soldDataMap = new Map();
-    for (const item of listings) {
+    const delayMs = config.deals.ebayApiDelayMs;
+    for (const item of toCheck) {
       const soldData = await ebayService.checkSoldItems(
         item.title,
         item.currentPrice,
@@ -80,11 +93,11 @@ async function runScan() {
         config.deals.soldItemsPerCheck,
       );
       soldDataMap.set(item.ebayItemId, soldData);
-      await ebayService.delay(200);
+      await ebayService.delay(delayMs);
     }
 
-    // Score all listings using the pre-fetched market price data
-    const scored = listings.map((item) => {
+    // Score all checked listings using the pre-fetched market price data
+    const scored = toCheck.map((item) => {
       const soldData = soldDataMap.get(item.ebayItemId);
       const actualSoldPrice = soldData && soldData.hasSoldItems ? soldData.medianSoldPrice : null;
       const soldMatchConfidence = soldData ? soldData.bestSimilarity : 0;

@@ -38,6 +38,8 @@ minDealScore: parseInt(process.env.MIN_DEAL_SCORE || '70', 10),
     minTitleSimilarity: parseFloat(process.env.MIN_TITLE_SIMILARITY || '0.95'),
     minProfitPercentage: parseFloat(process.env.MIN_PROFIT_PERCENTAGE || '25'),
     soldItemsPerCheck: parseInt(process.env.SOLD_ITEMS_PER_CHECK || '10', 10),
+    maxSoldChecksPerScan: parseInt(process.env.MAX_SOLD_CHECKS_PER_SCAN || '100', 10),
+    ebayApiDelayMs: parseInt(process.env.EBAY_API_DELAY_MS || '1500', 10),
   },
   notifications: {
     delayMs: parseInt(process.env.NOTIFICATION_DELAY_MS || '1500', 10),

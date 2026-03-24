@@ -15,56 +15,43 @@ function normalize(str) {
 }
 
 /**
- * Generate character bigrams from a string.
- * Returns an array of two-character strings.
- */
-function getBigrams(str) {
-  var bigrams = [];
-  for (var i = 0; i < str.length - 1; i++) {
-    bigrams.push(str.substring(i, i + 2));
-  }
-  return bigrams;
-}
-
-/**
- * Compute Dice coefficient bigram similarity between two title strings.
+ * Compute token-based Dice coefficient similarity between two title strings.
  * Returns a value between 0.0 (no similarity) and 1.0 (identical).
  *
- * Formula: 2 * |intersection| / (|bigrams_a| + |bigrams_b|)
+ * Formula: (2 * matchingTokens) / (totalTokensA + totalTokensB)
  *
  * Titles are normalized before comparison (lowercased, punctuation removed,
- * whitespace collapsed).
+ * whitespace collapsed), then split into word tokens.
  */
 function titleSimilarity(a, b) {
   var normA = normalize(a);
   var normB = normalize(b);
 
   if (normA === normB) return 1.0;
-  if (normA.length < 2 || normB.length < 2) return 0.0;
 
-  var bigramsA = getBigrams(normA);
-  var bigramsB = getBigrams(normB);
+  var tokensA = normA.split(' ').filter(function(t) { return t.length > 0; });
+  var tokensB = normB.split(' ').filter(function(t) { return t.length > 0; });
 
-  if (bigramsA.length === 0 || bigramsB.length === 0) return 0.0;
+  if (tokensA.length === 0 || tokensB.length === 0) return 0.0;
 
-  // Build a frequency map for bigramsB so we handle duplicates correctly
+  // Build a frequency map for tokensB so we handle duplicates correctly
   var freqB = new Map();
-  for (var i = 0; i < bigramsB.length; i++) {
-    var bg = bigramsB[i];
-    freqB.set(bg, (freqB.get(bg) || 0) + 1);
+  for (var i = 0; i < tokensB.length; i++) {
+    var tk = tokensB[i];
+    freqB.set(tk, (freqB.get(tk) || 0) + 1);
   }
 
-  var intersection = 0;
-  for (var j = 0; j < bigramsA.length; j++) {
-    var bgA = bigramsA[j];
-    var count = freqB.get(bgA) || 0;
+  var matching = 0;
+  for (var j = 0; j < tokensA.length; j++) {
+    var tkA = tokensA[j];
+    var count = freqB.get(tkA) || 0;
     if (count > 0) {
-      intersection++;
-      freqB.set(bgA, count - 1);
+      matching++;
+      freqB.set(tkA, count - 1);
     }
   }
 
-  return (2 * intersection) / (bigramsA.length + bigramsB.length);
+  return (2 * matching) / (tokensA.length + tokensB.length);
 }
 
 module.exports = { titleSimilarity, normalize };
