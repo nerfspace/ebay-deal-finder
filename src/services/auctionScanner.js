@@ -89,7 +89,7 @@ class AuctionScanner {
 
     for (const source of this.sources) {
       try {
-        const items = await source.fetchEndingSoon(window.minutes, []);
+        const items = await source.fetchEndingSoon(window.minutes, this.config.auctionSources.keywords);
         logger.scan(`[AuctionScanner] ${source.name}: ${items.length} item(s) ending within ${window.minutes} min`);
 
         for (const item of items) {

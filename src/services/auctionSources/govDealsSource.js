@@ -9,8 +9,11 @@ const logger = require('../../utils/logger');
 // GovDeals RSS feed — category 0 returns all categories
 const RSS_BASE = 'https://www.govdeals.com/rss/index.cfm';
 
+// Default time-left in minutes when end date cannot be parsed (GovDeals auctions typically run for days)
+const DEFAULT_TIME_LEFT_MINUTES = 1440;
+
 const HEADERS = {
-  'User-Agent': 'ebay-deal-finder/1.0 (auction-scanner)',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
   'Accept': 'application/rss+xml, application/xml, text/xml, */*',
 };
 
@@ -65,6 +68,8 @@ class GovDealsSource extends BaseAuctionSource {
       responseType: 'text',
     });
 
+    logger.debug(`[${this.name}] Response status: ${response.status}, size: ${(response.data || '').length} bytes`);
+
     return this._parseRss(response.data, timeWindowMinutes);
   }
 
@@ -73,6 +78,17 @@ class GovDealsSource extends BaseAuctionSource {
 
     // Simple regex-based RSS item extraction to avoid heavy XML dependency
     const itemBlocks = xml.match(/<item>([\s\S]*?)<\/item>/gi) || [];
+
+    // Multiple date patterns to handle GovDeals' various formats:
+    // "Bid Closing Date: 03/25/2026 3:00 PM ET"
+    // "Closes: March 25, 2026"
+    // "Sale Closing Date: 3/25/2026"
+    const datePatterns = [
+      /(?:closing|closes?|end(?:ing)?)\s*(?:date)?[:\s]+(\d{1,2}\/\d{1,2}\/\d{2,4}(?:\s+\d{1,2}:\d{2}\s*(?:AM|PM)?(?:\s*[A-Z]{2,4})?)?)/i,
+      /(?:closing|closes?|end(?:ing)?)\s*(?:date)?[:\s]+([A-Za-z]+ \d{1,2},?\s*\d{4}(?:\s+\d{1,2}:\d{2}\s*(?:AM|PM)?)?)/i,
+      /(\d{1,2}\/\d{1,2}\/\d{2,4}\s+\d{1,2}:\d{2}\s*(?:AM|PM)\s*[A-Z]{2,4})/i,
+      /ends?[:\s]+([A-Za-z]+ \d+,?\s*\d{4}[^<]*)/i,
+    ];
 
     for (const block of itemBlocks) {
       try {
@@ -87,20 +103,33 @@ class GovDealsSource extends BaseAuctionSource {
         const idMatch = link.match(/itemNo=(\d+)/i) || link.match(/\/(\d+)\/?$/);
         const itemId = idMatch ? idMatch[1] : crypto.createHash('sha1').update(link).digest('hex').slice(0, 16);
 
-        // Try to extract end date from description (GovDeals includes it in description HTML)
-        const endDateMatch = description && description.match(/ends?[:\s]+([A-Za-z]+ \d+,?\s*\d{4}[^<]*)/i);
         let endTime = '';
         let timeLeftMinutes = 0;
+        let dateParsed = false;
 
-        if (endDateMatch) {
-          const parsed = new Date(endDateMatch[1].trim());
-          if (!isNaN(parsed.getTime())) {
-            endTime = parsed.toISOString();
-            timeLeftMinutes = this.calcTimeLeftMinutes(endTime);
+        // Try each date pattern against the description
+        if (description) {
+          for (const pattern of datePatterns) {
+            const match = description.match(pattern);
+            if (match) {
+              // Strip timezone abbreviations before parsing (Date() handles UTC offsets not tz names)
+              const dateStr = match[1].replace(/\s+[A-Z]{2,4}$/, '').trim();
+              const parsed = new Date(dateStr);
+              if (!isNaN(parsed.getTime())) {
+                endTime = parsed.toISOString();
+                timeLeftMinutes = this.calcTimeLeftMinutes(endTime);
+                dateParsed = true;
+                break;
+              }
+            }
+          }
+
+          if (!dateParsed) {
+            logger.debug(`[${this.name}] Could not parse end date. Description sample: ${description.slice(0, 200)}`);
           }
         }
 
-        // If no end date extracted, use pubDate as a fallback estimate
+        // If no end date extracted from description, use pubDate as a fallback estimate
         if (!endTime && pubDate) {
           const parsed = new Date(pubDate);
           if (!isNaN(parsed.getTime())) {
@@ -109,7 +138,13 @@ class GovDealsSource extends BaseAuctionSource {
           }
         }
 
-        if (timeLeftMinutes < 0 || timeLeftMinutes > timeWindowMinutes) continue;
+        // If still no parseable end time, use generous default so items aren't silently dropped
+        if (!endTime || timeLeftMinutes < 0) {
+          timeLeftMinutes = DEFAULT_TIME_LEFT_MINUTES;
+          endTime = new Date(Date.now() + DEFAULT_TIME_LEFT_MINUTES * 60000).toISOString();
+        }
+
+        if (timeLeftMinutes > timeWindowMinutes) continue;
 
         // Current bid from description
         const bidMatch = description && description.match(/current bid[:\s]+\$?([\d,.]+)/i);

@@ -6,12 +6,21 @@ const crypto = require('crypto');
 const BaseAuctionSource = require('./baseSource');
 const logger = require('../../utils/logger');
 
-const SEARCH_BASE = 'https://www.ha.com/search';
+const SEARCH_BASE = 'https://www.ha.com/c/search.zx';
+
+const MAX_CONSECUTIVE_FAILURES = 2;
 
 const HEADERS = {
-  'User-Agent': 'ebay-deal-finder/1.0 (auction-scanner)',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-  'Accept-Language': 'en-US,en;q=0.5',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Accept-Encoding': 'gzip, deflate, br',
+  'Connection': 'keep-alive',
+  'Sec-Fetch-Dest': 'document',
+  'Sec-Fetch-Mode': 'navigate',
+  'Sec-Fetch-Site': 'none',
+  'Sec-Fetch-User': '?1',
+  'Upgrade-Insecure-Requests': '1',
 };
 
 class HeritageSource extends BaseAuctionSource {
@@ -32,10 +41,12 @@ class HeritageSource extends BaseAuctionSource {
     const searchTerms = keywords.length > 0 ? keywords : [''];
     const results = [];
     const seen = new Set();
+    let consecutiveBlocks = 0;
 
     for (const keyword of searchTerms) {
       try {
         const items = await this._fetchPage(keyword, timeWindowMinutes);
+        consecutiveBlocks = 0;
         for (const item of items) {
           if (!seen.has(item.sourceId)) {
             seen.add(item.sourceId);
@@ -44,7 +55,12 @@ class HeritageSource extends BaseAuctionSource {
         }
         await this.delay();
       } catch (err) {
+        consecutiveBlocks++;
         logger.warn(`[${this.name}] Error fetching keyword "${keyword}": ${err.message}`);
+        if (consecutiveBlocks >= MAX_CONSECUTIVE_FAILURES) {
+          logger.warn(`[${this.name}] Multiple consecutive failures — pausing remaining keywords for this scan.`);
+          break;
+        }
       }
     }
 
@@ -54,18 +70,36 @@ class HeritageSource extends BaseAuctionSource {
   async _fetchPage(keyword, timeWindowMinutes) {
     const params = {
       N: '0',
-      type: 'buy-now-auction',
-      ic: '1',
+      type: 'auction',
     };
-    if (keyword) params.q = keyword;
+    if (keyword) params.Ntt = keyword;
 
-    const response = await axios.get(SEARCH_BASE, {
-      params,
-      headers: HEADERS,
-      timeout: 15000,
-    });
+    let response;
+    try {
+      response = await axios.get(SEARCH_BASE, {
+        params,
+        headers: HEADERS,
+        timeout: 15000,
+      });
+    } catch (err) {
+      if (err.response && err.response.status === 403) {
+        logger.warn(`[${this.name}] Received 403 Forbidden — site may be blocking automated requests. Skipping.`);
+        return [];
+      }
+      throw err;
+    }
 
-    return this._parseHtml(response.data, timeWindowMinutes);
+    logger.debug(`[${this.name}] Response status: ${response.status}, size: ${(response.data || '').length} bytes`);
+
+    const items = this._parseHtml(response.data, timeWindowMinutes);
+
+    if (items.length === 0) {
+      logger.debug(`[${this.name}] 0 items parsed for keyword "${keyword}". HTML sample: ${String(response.data).slice(0, 500)}`);
+    } else {
+      logger.debug(`[${this.name}] First item sample: ${JSON.stringify(items[0]).slice(0, 200)}`);
+    }
+
+    return items;
   }
 
   _parseHtml(html, timeWindowMinutes) {

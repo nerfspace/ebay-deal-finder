@@ -4,13 +4,16 @@ const axios = require('axios');
 const BaseAuctionSource = require('./baseSource');
 const logger = require('../../utils/logger');
 
-const BASE_URL = 'https://shopgoodwill.com/api/search/search';
+const BASE_URL = 'https://buyerapi.shopgoodwill.com/api/Search/ItemListing';
+
+const MAX_SEARCH_PRICE = 999999;
 
 const DEFAULT_HEADERS = {
   'Content-Type': 'application/json',
   'Accept': 'application/json',
-  'User-Agent': 'ebay-deal-finder/1.0 (auction-scanner)',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
   'Referer': 'https://shopgoodwill.com',
+  'Origin': 'https://shopgoodwill.com',
 };
 
 class ShopGoodwillSource extends BaseAuctionSource {
@@ -28,7 +31,13 @@ class ShopGoodwillSource extends BaseAuctionSource {
   async fetchEndingSoon(timeWindowMinutes, keywords = []) {
     if (!this.enabled) return [];
 
-    const searchTerms = keywords.length > 0 ? keywords : [''];
+    // ShopGoodwill requires actual search terms — empty string returns 404
+    const searchTerms = keywords.filter((k) => k.length > 0);
+    if (searchTerms.length === 0) {
+      logger.warn(`[${this.name}] No keywords configured. Skipping scan.`);
+      return [];
+    }
+
     const results = [];
     const seen = new Set();
 
@@ -53,19 +62,22 @@ class ShopGoodwillSource extends BaseAuctionSource {
   async _fetchPage(keyword, timeWindowMinutes) {
     const body = {
       searchText: keyword,
-      selectedCategoryIds: '',
-      selectedSellerIds: '',
+      searchInDescription: false,
+      selectedCategoryIds: [],
+      selectedSellerIds: [],
       lowPrice: 0,
-      highPrice: 9999,
-      sortColumn: 'EndDate',
-      sortOrder: 'ASC',
-      pageNumber: 1,
+      highPrice: MAX_SEARCH_PRICE,
+      sortColumn: 'EndingDate',
+      sortOrder: 'a',
+      page: 1,
       pageSize: 40,
-      isGetAllPages: false,
-      isGet498Only: false,
-      selectedLocationIds: '',
+      categoryLevelNo: 1,
+      searchCategoryLevel: 0,
+      closedAuctionEndingDate: '',
       closedAuctionDaysBack: 0,
-      useBuyNowSearch: false,
+      buyNowOnly: false,
+      selectedLocationIds: [],
+      savedSearchName: '',
       isFeaturedSearch: false,
     };
 
@@ -74,7 +86,21 @@ class ShopGoodwillSource extends BaseAuctionSource {
       timeout: 15000,
     });
 
-    const items = response.data?.searchResults?.items || [];
+    logger.debug(`[${this.name}] Response status: ${response.status}, size: ${JSON.stringify(response.data).length} bytes`);
+    logger.debug(`[${this.name}] Response top-level keys: ${Object.keys(response.data || {}).join(', ')}`);
+
+    const items =
+      response.data?.searchResults?.items ||
+      response.data?.items ||
+      (Array.isArray(response.data) ? response.data : []);
+
+    if (items.length === 0) {
+      const sample = JSON.stringify(response.data).slice(0, 300);
+      logger.debug(`[${this.name}] 0 items returned for keyword "${keyword}". Response sample: ${sample}`);
+    } else {
+      logger.debug(`[${this.name}] First normalized item sample: ${JSON.stringify(items[0]).slice(0, 200)}`);
+    }
+
     const normalized = [];
 
     for (const raw of items) {
