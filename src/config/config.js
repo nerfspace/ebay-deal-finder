@@ -51,6 +51,22 @@ minDealScore: parseInt(process.env.MIN_DEAL_SCORE || '70', 10),
   logging: {
     level: process.env.LOG_LEVEL || 'info',
   },
+  poller: {
+    minIntervalMs: parseInt(process.env.POLL_INTERVAL_MIN_MS || '5000', 10),
+    maxIntervalMs: parseInt(process.env.POLL_INTERVAL_MAX_MS || '15000', 10),
+    proxyUrls: process.env.PROXY_URLS
+      ? process.env.PROXY_URLS.split(',').map((u) => u.trim()).filter(Boolean)
+      : [],
+  },
+  api: {
+    minDealScore: parseInt(process.env.MIN_DEAL_SCORE_API || '80', 10),
+  },
+  marketplace: {
+    feeRate: parseFloat(process.env.MARKETPLACE_FEE_RATE || '0.16'),
+  },
+  queue: {
+    type: process.env.QUEUE_TYPE || 'memory',
+  },
   auctionSources: {
     enabled: process.env.AUCTION_SOURCES_ENABLED !== 'false',
     minTitleSimilarity: parseFloat(process.env.AUCTION_MIN_TITLE_SIMILARITY || '0.80'),

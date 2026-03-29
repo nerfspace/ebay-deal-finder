@@ -151,6 +151,72 @@ async function markAuctionDealNotified(sourceId) {
   ]);
 }
 
+// ---------------------------------------------------------------------------
+// listings / scores tables (new event-driven pipeline)
+// ---------------------------------------------------------------------------
+
+async function listingExists(listingId) {
+  const row = await get('SELECT listing_id FROM listings WHERE listing_id = ?', [listingId]);
+  return !!row;
+}
+
+async function saveListing(listing) {
+  const sql = `
+    INSERT OR IGNORE INTO listings (
+      listing_id, title, price, shipping_cost, seller_feedback,
+      category, listing_url, timestamp_detected
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `;
+  return run(sql, [
+    listing.listing_id,
+    listing.title,
+    listing.price,
+    listing.shipping_cost != null ? listing.shipping_cost : 0,
+    listing.seller_feedback != null ? listing.seller_feedback : null,
+    listing.category || null,
+    listing.listing_url || null,
+    listing.timestamp_detected,
+  ]);
+}
+
+async function saveScore(score) {
+  const sql = `
+    INSERT OR REPLACE INTO scores (
+      listing_id, deal_score, estimated_profit, risk_score,
+      sell_through_rate, confidence, analyzed_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+  `;
+  return run(sql, [
+    score.listing_id,
+    score.deal_score,
+    score.estimated_profit != null ? score.estimated_profit : null,
+    score.risk_score != null ? score.risk_score : null,
+    score.sell_through_rate != null ? score.sell_through_rate : null,
+    score.confidence != null ? score.confidence : null,
+    score.analyzed_at,
+  ]);
+}
+
+/**
+ * Return top deals joining listings and scores, ordered by deal_score DESC.
+ * @param {number} minScore - minimum deal_score to include
+ * @param {number} [limit=50]
+ * @returns {object[]}
+ */
+async function getTopDeals(minScore, limit) {
+  if (minScore == null) minScore = 80;
+  if (!limit) limit = 50;
+  return all(
+    `SELECT l.listing_id, l.title, l.price, s.deal_score, s.estimated_profit, l.listing_url
+     FROM listings l
+     JOIN scores s ON l.listing_id = s.listing_id
+     WHERE s.deal_score >= ?
+     ORDER BY s.deal_score DESC
+     LIMIT ?`,
+    [minScore, limit],
+  );
+}
+
 module.exports = {
   dealExists,
   saveDeal,
@@ -163,4 +229,8 @@ module.exports = {
   auctionDealExists,
   saveAuctionDeal,
   markAuctionDealNotified,
+  listingExists,
+  saveListing,
+  saveScore,
+  getTopDeals,
 };

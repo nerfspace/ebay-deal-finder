@@ -5,6 +5,9 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
+    "start:poller": "node src/poller/listingPoller.js",
+    "start:analyzer": "node src/analyzer/dealAnalyzer.js",
+    "start:api": "node src/api/server.js",
     "dev": "node --watch src/index.js"
   },
   "dependencies": {

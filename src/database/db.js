@@ -70,6 +70,27 @@ CREATE TABLE IF NOT EXISTS auction_deals (
   found_at TEXT NOT NULL,
   notified_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS listings (
+  listing_id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  price REAL NOT NULL,
+  shipping_cost REAL DEFAULT 0,
+  seller_feedback INTEGER,
+  category TEXT,
+  listing_url TEXT,
+  timestamp_detected TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS scores (
+  listing_id TEXT PRIMARY KEY REFERENCES listings(listing_id),
+  deal_score REAL NOT NULL,
+  estimated_profit REAL,
+  risk_score REAL,
+  sell_through_rate REAL,
+  confidence REAL,
+  analyzed_at TEXT NOT NULL
+);
 `;
 
 function initDb(dbPath) {
