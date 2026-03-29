@@ -161,6 +161,55 @@ class EbayService {
     };
   }
 
+  /**
+   * Fetch comparable sales for a product query and return prices plus the median.
+   * Uses the same Browse API search-by-title approach as checkSoldItems.
+   * @param {string} query - product name or title to search for
+   * @param {number} [limit=10] - max results to request
+   * @returns {Promise<{ prices: number[], medianPrice: number, itemCount: number, totalListed: number }>}
+   */
+  async fetchComparableSales(query, limit) {
+    if (!limit) limit = this.soldItemsPerCheck;
+
+    const emptyResult = { prices: [], medianPrice: 0, itemCount: 0, totalListed: 0 };
+
+    try {
+      logger.debug('Fetching comparable sales for: "' + (query || '').substring(0, 50) + '"');
+
+      const response = await axios.get(this.baseUrl + '/item_summary/search', {
+        headers: await this._headers(),
+        params: {
+          q: query,
+          sort: 'price',
+          limit: limit,
+          filter: 'priceCurrency:USD',
+        },
+        timeout: 10000,
+      });
+
+      const itemSummaries = response.data.itemSummaries || [];
+      const totalListed = response.data.total || itemSummaries.length;
+
+      if (itemSummaries.length === 0) return emptyResult;
+
+      const prices = itemSummaries
+        .map(function(item) { return item.price ? parseFloat(item.price.value) : null; })
+        .filter(function(p) { return p && p > 0; });
+
+      const medianPrice = computeMedianPrice(prices);
+
+      return {
+        prices: prices,
+        medianPrice: medianPrice,
+        itemCount: prices.length,
+        totalListed: totalListed,
+      };
+    } catch (err) {
+      logger.warn('Error fetching comparable sales: ' + err.message);
+      return emptyResult;
+    }
+  }
+
   async checkSoldItems(title, currentPrice, minPriceDifference, limit) {
     if (!minPriceDifference) minPriceDifference = 50;
     if (!limit) limit = this.soldItemsPerCheck;

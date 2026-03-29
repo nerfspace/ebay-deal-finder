@@ -1,6 +1,5 @@
 'use strict';
 
-const express = require('express');
 const config = require('./config/config');
 const logger = require('./utils/logger');
 const { initDb, closeDb } = require('./database/db');
@@ -19,7 +18,9 @@ const FilterEngine = require('./services/filterEngine');
 const NotificationService = require('./services/notificationService');
 const AuctionScanner = require('./services/auctionScanner');
 const { createSources } = require('./services/auctionSources');
-const ebayWebhookRouter = require('./routes/ebayWebhook');
+const ListingPoller = require('./poller/listingPoller');
+const dealAnalyzer = require('./analyzer/dealAnalyzer');
+const apiServer = require('./api/server');
 
 logger.setLevel(config.logging.level);
 
@@ -31,18 +32,6 @@ const filterEngine = new FilterEngine({
   minProfitPercentage: config.deals.minProfitPercentage,
   minSellerFeedbackPct: config.deals.minSellerFeedbackPct,
   binOnly: config.deals.binOnly,
-});
-
-// Create Express app
-const app = express();
-app.use(express.json());
-
-// Register webhook routes
-app.use('/ebay', ebayWebhookRouter);
-
-// Health check endpoint
-app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
 /**
@@ -185,6 +174,8 @@ async function runScan() {
 
 /**
  * Main application entry point.
+ * Runs all four components in a single process for development convenience.
+ * Each component is also independently startable via its own entry point.
  */
 async function main() {
   logger.info('eBay Deal Finder starting up...');
@@ -194,17 +185,20 @@ async function main() {
 
   await initDb(config.database.path);
 
-  // Start Express server
+  // Component 4: API Layer (handles /deals, /health, /ebay/notification)
   const PORT = process.env.PORT || 3000;
-  app.listen(PORT, () => {
-    logger.info(`[SERVER] Listening on port ${PORT}`);
-    logger.info(`[WEBHOOK] Ready to receive eBay notifications at /ebay/notification`);
-  });
+  await apiServer.start(PORT);
 
-  // Run initial eBay scan immediately
+  // Component 3: Deal Analyzer (consumes new-listings queue)
+  await dealAnalyzer.start();
+
+  // Component 1: Listing Poller (discovers new listings, feeds the queue)
+  const poller = new ListingPoller(config);
+  poller.start();
+
+  // Legacy scan loop (retained for backward compatibility)
+  logger.info('[LEGACY] Starting legacy scan loop alongside event-driven components.');
   await runScan();
-
-  // Schedule recurring eBay scans
   const intervalMs = config.scan.intervalMinutes * 60 * 1000;
   const intervalId = setInterval(async () => {
     try {
@@ -213,8 +207,7 @@ async function main() {
       logger.error(`Unhandled error in scan loop: ${err.message}`);
     }
   }, intervalMs);
-
-  logger.info(`Next scan in ${config.scan.intervalMinutes} minutes.`);
+  logger.info(`Next legacy scan in ${config.scan.intervalMinutes} minutes.`);
 
   // Initialize and start the multi-source auction scanner (if enabled)
   let auctionScanner = null;
@@ -236,7 +229,9 @@ async function main() {
   async function shutdown(signal) {
     logger.info(`Received ${signal}. Shutting down gracefully...`);
     clearInterval(intervalId);
+    poller.stop();
     if (auctionScanner) auctionScanner.stop();
+    apiServer.stop();
     await closeDb();
     logger.info('Shutdown complete.');
     process.exit(0);
