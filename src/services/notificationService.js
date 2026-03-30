@@ -1,29 +1,37 @@
 'use strict';
 
-const axios = require('axios');
+const nodemailer = require('nodemailer');
 const logger = require('../utils/logger');
 
 class NotificationService {
   constructor(config) {
-    this.webhookUrl = config.discord.webhookUrl;
-    this.enabled = !!this.webhookUrl;
+    this.emailTo = config.email.to;
+    this.enabled = !!this.emailTo;
+    this.emailFrom = config.email.from || this.emailTo;
+    this.transporter = nodemailer.createTransport({
+      host: config.email.host,
+      port: config.email.port || 587,
+      secure: (config.email.port || 587) === 465,
+      auth: {
+        user: config.email.user,
+        pass: config.email.pass,
+      },
+    });
     this.queue = [];
     this.isProcessing = false;
     this.maxRetries = 3;
-    this.lastSendTime = 0;
-    this.minGapMs = 2000; // 2 second minimum between sends
     this.sentDealIds = new Set(); // Track sent deals to avoid duplicates
   }
 
   async queueNotification(title, body, url = null, dealId = null) {
     if (!this.enabled) return false;
-    
+
     // Don't queue if we've already sent this deal
     if (dealId && this.sentDealIds.has(dealId)) {
       logger.debug(`Skipping duplicate deal notification: ${dealId}`);
       return false;
     }
-    
+
     if (dealId) this.sentDealIds.add(dealId);
     this.queue.push({ title, body, url });
     return true;
@@ -35,39 +43,13 @@ class NotificationService {
     const allNotifications = [...this.queue];
     this.queue = [];
 
-    // Send in batches of 10 (Discord's max embeds per message)
-    const batchSize = 10;
-    let success = true;
-    for (let i = 0; i < allNotifications.length; i += batchSize) {
-      const batch = allNotifications.slice(i, i + batchSize);
-
-      // Respect minimum gap between sends
-      const timeSinceLastSend = Date.now() - this.lastSendTime;
-      if (this.lastSendTime > 0 && timeSinceLastSend < this.minGapMs) {
-        const waitTime = this.minGapMs - timeSinceLastSend;
-        logger.debug(`Waiting ${waitTime}ms before next batch to avoid rate limit...`);
-        await new Promise(resolve => setTimeout(resolve, waitTime));
-      }
-
-      const result = await this.sendBatchMessage(batch);
-      if (!result) success = false;
-    }
-    return success;
+    return this.sendBatchMessage(allNotifications);
   }
 
   async processQueue() {
     if (this.isProcessing || this.queue.length === 0) return;
     this.isProcessing = true;
 
-    // Wait before sending to avoid rate limits
-    const timeSinceLastSend = Date.now() - this.lastSendTime;
-    if (timeSinceLastSend < this.minGapMs) {
-      const waitTime = this.minGapMs - timeSinceLastSend;
-      logger.debug(`Waiting ${waitTime}ms before sending to avoid rate limit...`);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-    }
-
-    // Batch all queued notifications into a single message
     const allNotifications = [...this.queue];
     this.queue = [];
 
@@ -79,40 +61,62 @@ class NotificationService {
   }
 
   async sendBatchMessage(notifications, attempt = 1) {
-    try {
-      // Create embeds for each deal (max 10 per message)
-      const embeds = notifications.slice(0, 10).map(notif => ({
-        title: notif.title,
-        description: notif.body,
-        color: 16711680, // Red
-        timestamp: new Date().toISOString(),
-        ...(notif.url && { url: notif.url }),
-      }));
+    const subject = notifications.length === 1
+      ? `Deal Alert: ${notifications[0].title}`
+      : `Deal Alert: ${notifications.length} new deals found`;
 
-      logger.info(`Sending batch to Discord: ${notifications.length} deals...`);
-      await axios.post(this.webhookUrl, { embeds }, { timeout: 10000 });
-      this.lastSendTime = Date.now();
-      logger.info(`✅ Discord batch sent successfully!`);
+    function escapeHtml(str) {
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    const rows = notifications.map(notif => {
+      const linkHtml = notif.url
+        ? `<a href="${escapeHtml(notif.url)}" style="color:#e44;">View Deal</a>`
+        : '';
+      const bodyHtml = escapeHtml(notif.body).replace(/\n/g, '<br>');
+      return `
+        <tr>
+          <td style="padding:12px 0;border-bottom:1px solid #eee;">
+            <strong style="font-size:15px;">${escapeHtml(notif.title)}</strong><br>
+            <span style="color:#444;line-height:1.6;">${bodyHtml}</span><br>
+            ${linkHtml}
+          </td>
+        </tr>`;
+    }).join('');
+
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
+        <h2 style="color:#c0392b;">🔥 eBay Deal Finder — ${notifications.length} deal${notifications.length !== 1 ? 's' : ''} found</h2>
+        <table style="width:100%;border-collapse:collapse;">
+          ${rows}
+        </table>
+        <p style="color:#999;font-size:12px;margin-top:16px;">Sent by eBay Deal Finder</p>
+      </div>`;
+
+    try {
+      logger.info(`Sending email: ${notifications.length} deal${notifications.length !== 1 ? 's' : ''}...`);
+      await this.transporter.sendMail({
+        from: this.emailFrom,
+        to: this.emailTo,
+        subject,
+        html,
+      });
+      logger.info(`✅ Email sent successfully!`);
       return true;
     } catch (err) {
-      const status = err.response?.status;
-
-      if (status === 429 && attempt <= this.maxRetries) {
-        // Use Discord's actual retry_after value (in seconds), with a 2s floor and 30s cap
-        const retryAfterRaw = err.response?.data?.retry_after;
-        // Discord returns retry_after in seconds (as a float); convert to ms
-        const retryAfterMs = retryAfterRaw != null ? retryAfterRaw * 1000 : 2000;
-        const waitMs = Math.min(Math.max(retryAfterMs, 2000), 30000);
-        logger.warn(`Discord rate-limited (429). Waiting ${waitMs}ms... (attempt ${attempt}/${this.maxRetries})`);
+      if (attempt <= this.maxRetries) {
+        const waitMs = Math.min(Math.pow(2, attempt) * 1000, 30000);
+        logger.warn(`Failed to send email (attempt ${attempt}/${this.maxRetries}): ${err.message}. Retrying in ${waitMs}ms...`);
         await new Promise(resolve => setTimeout(resolve, waitMs));
         return this.sendBatchMessage(notifications, attempt + 1);
-      } else if (status === 429) {
-        logger.error(`❌ Discord rate-limited after ${this.maxRetries} retries. Giving up on ${notifications.length} deals.`);
-        return false;
-      } else {
-        logger.error(`❌ Failed to send Discord notification (${status}): ${err.message}`);
-        return false;
       }
+      logger.error(`❌ Failed to send email after ${this.maxRetries} retries: ${err.message}`);
+      return false;
     }
   }
 
@@ -135,12 +139,11 @@ class NotificationService {
       : (deal.expectedProfit && deal.currentPrice ? `${((deal.expectedProfit / deal.currentPrice) * 100).toFixed(1)}%` : 'N/A');
 
     const body =
-      `💰 **Listed:** $${deal.currentPrice.toFixed(2)}\n` +
-      `📈 **Market Price:** ${marketPrice}\n` +
-      `💵 **Profit:** ~$${deal.expectedProfit != null ? deal.expectedProfit.toFixed(2) : 'N/A'} (${profitPct})\n` +
-      `🔍 **Title Match:** ${similarityPct} (${matchCount} comparable listing${matchCount !== 1 ? 's' : ''})\n` +
-      `🏆 **Deal Score:** ${deal.dealScore}/100\n` +
-      `🔗 [Buy Now](${deal.url})`;
+      `💰 Listed: $${deal.currentPrice.toFixed(2)}\n` +
+      `📈 Market Price: ${marketPrice}\n` +
+      `💵 Profit: ~$${deal.expectedProfit != null ? deal.expectedProfit.toFixed(2) : 'N/A'} (${profitPct})\n` +
+      `🔍 Title Match: ${similarityPct} (${matchCount} comparable listing${matchCount !== 1 ? 's' : ''})\n` +
+      `🏆 Deal Score: ${deal.dealScore}/100`;
 
     return this.queueNotification(title, body, deal.url, deal.ebayItemId);
   }
@@ -156,7 +159,7 @@ class NotificationService {
     this.sentDealIds.add(dealId);
 
     const urgencyLabel = `${window.emoji} ${window.label} | ${item.source}`;
-    const title = `${urgencyLabel}\n📦 ${item.title.substring(0, 80)}`;
+    const title = `${urgencyLabel} — ${item.title.substring(0, 80)}`;
 
     const medianPrice = item.ebayMedianSoldPrice != null
       ? `$${item.ebayMedianSoldPrice.toFixed(2)} (median of ${item.ebayMatchCount} comp${item.ebayMatchCount !== 1 ? 's' : ''})`
@@ -175,12 +178,11 @@ class NotificationService {
       : 'Unknown';
 
     const body =
-      `💰 **Current Bid:** $${item.currentBid.toFixed(2)}\n` +
-      `📈 **eBay Sold Price:** ${medianPrice}\n` +
-      `💵 **Projected Profit:** ${profit}\n` +
-      `🔍 **Title Match:** ${similarity}\n` +
-      `⏰ **Ends:** ${timeLeft}\n` +
-      `🔗 [Bid Now](${item.url})`;
+      `💰 Current Bid: $${item.currentBid.toFixed(2)}\n` +
+      `📈 eBay Sold Price: ${medianPrice}\n` +
+      `💵 Projected Profit: ${profit}\n` +
+      `🔍 Title Match: ${similarity}\n` +
+      `⏰ Ends: ${timeLeft}`;
 
     this.queue.push({ title, body, url: item.url });
     return true;
