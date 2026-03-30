@@ -3,7 +3,6 @@
 const ShopGoodwillSource = require('./shopGoodwillSource');
 const GovDealsSource = require('./govDealsSource');
 const PropertyRoomSource = require('./propertyRoomSource');
-const HeritageSource = require('./heritageSource');
 const BidSpotterSource = require('./bidSpotterSource');
 
 /**
@@ -19,7 +18,6 @@ function createSources(auctionSourcesConfig) {
     new ShopGoodwillSource(cfg.shopGoodwill || {}),
     new GovDealsSource(cfg.govDeals || {}),
     new PropertyRoomSource(cfg.propertyRoom || {}),
-    new HeritageSource(cfg.heritage || {}),
     new BidSpotterSource(cfg.bidSpotter || {}),
   ].filter((source) => source.enabled);
 }
@@ -29,7 +27,6 @@ module.exports = {
   ShopGoodwillSource,
   GovDealsSource,
   PropertyRoomSource,
-  HeritageSource,
   BidSpotterSource,
   createSources,
 };

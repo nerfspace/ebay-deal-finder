@@ -173,41 +173,84 @@ class EbayService {
 
     const emptyResult = { prices: [], medianPrice: 0, itemCount: 0, totalListed: 0 };
 
-    try {
-      logger.debug('Fetching comparable sales for: "' + (query || '').substring(0, 50) + '"');
-
-      const response = await axios.get(this.baseUrl + '/item_summary/search', {
-        headers: await this._headers(),
-        params: {
-          q: query,
-          sort: 'price',
-          limit: limit,
-          filter: 'priceCurrency:USD',
-        },
-        timeout: 10000,
-      });
-
-      const itemSummaries = response.data.itemSummaries || [];
-      const totalListed = response.data.total || itemSummaries.length;
-
-      if (itemSummaries.length === 0) return emptyResult;
-
-      const prices = itemSummaries
-        .map(function(item) { return item.price ? parseFloat(item.price.value) : null; })
-        .filter(function(p) { return p && p > 0; });
-
-      const medianPrice = computeMedianPrice(prices);
-
-      return {
-        prices: prices,
-        medianPrice: medianPrice,
-        itemCount: prices.length,
-        totalListed: totalListed,
-      };
-    } catch (err) {
-      logger.warn('Error fetching comparable sales: ' + err.message);
-      return emptyResult;
+    // Circuit breaker: if too many consecutive 429s, pause before continuing
+    if (this.consecutiveRateLimitErrors >= this.circuitBreakerThreshold) {
+      logger.warn(
+        'Circuit breaker triggered after ' + this.consecutiveRateLimitErrors +
+        ' consecutive 429 errors. Pausing ' + (this.circuitBreakerWaitMs / 1000) + 's...'
+      );
+      await this.delay(this.circuitBreakerWaitMs);
+      this.consecutiveRateLimitErrors = 0;
     }
+
+    var maxRetries = 3;
+    var retryCount = 0;
+
+    while (retryCount <= maxRetries) {
+      try {
+        logger.debug('Fetching comparable sales for: "' + (query || '').substring(0, 50) + '"');
+
+        const response = await axios.get(this.baseUrl + '/item_summary/search', {
+          headers: await this._headers(),
+          params: {
+            q: query,
+            sort: 'price',
+            limit: limit,
+            filter: 'priceCurrency:USD',
+          },
+          timeout: 10000,
+        });
+
+        // Successful call — reset circuit breaker counter
+        this.consecutiveRateLimitErrors = 0;
+
+        const itemSummaries = response.data.itemSummaries || [];
+        const totalListed = response.data.total || itemSummaries.length;
+
+        if (itemSummaries.length === 0) return emptyResult;
+
+        const prices = itemSummaries
+          .map(function(item) { return item.price ? parseFloat(item.price.value) : null; })
+          .filter(function(p) { return p && p > 0; });
+
+        const medianPrice = computeMedianPrice(prices);
+
+        return {
+          prices: prices,
+          medianPrice: medianPrice,
+          itemCount: prices.length,
+          totalListed: totalListed,
+        };
+      } catch (err) {
+        var status = err.response ? err.response.status : null;
+
+        if (status === 429 && retryCount < maxRetries) {
+          this.consecutiveRateLimitErrors++;
+          var retryAfterHeader = err.response.headers && err.response.headers['retry-after'];
+          var retryAfterBodySecs = err.response.data && err.response.data.retry_after;
+          var waitSecs = retryAfterHeader
+            ? parseFloat(retryAfterHeader)
+            : (retryAfterBodySecs ? parseFloat(retryAfterBodySecs) : null);
+          var backoffMs = Math.pow(2, retryCount + 1) * 1000;
+          var waitMs = waitSecs ? Math.max(waitSecs * 1000, backoffMs) : backoffMs;
+          retryCount++;
+          logger.warn(
+            'Rate limited (429) on comparable sales. Waiting ' + waitMs + 'ms before retry ' +
+            retryCount + '/' + maxRetries + '...'
+          );
+          await this.delay(waitMs);
+        } else if (status === 429) {
+          this.consecutiveRateLimitErrors++;
+          logger.warn('Error fetching comparable sales (429 - max retries exceeded): ' + (query || '').substring(0, 50));
+          return emptyResult;
+        } else {
+          logger.warn('Error fetching comparable sales: ' + err.message);
+          return emptyResult;
+        }
+      }
+    }
+
+    return emptyResult;
   }
 
   async checkSoldItems(title, currentPrice, minPriceDifference, limit) {

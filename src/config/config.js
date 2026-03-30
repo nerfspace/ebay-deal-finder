@@ -2,7 +2,7 @@
 
 require('dotenv').config();
 
-const REQUIRED_VARS = ['EBAY_APP_ID', 'EBAY_CERT_ID', 'EBAY_AUTH_TOKEN', 'DISCORD_WEBHOOK_URL'];
+const REQUIRED_VARS = ['EBAY_APP_ID', 'EBAY_CERT_ID', 'EBAY_AUTH_TOKEN', 'EMAIL_TO'];
 
 function validate() {
   const missing = REQUIRED_VARS.filter((key) => !process.env[key]);
@@ -26,8 +26,13 @@ condition: process.env.SEARCH_CONDITION || 'NEW',
     minPrice: parseFloat(process.env.MIN_PRICE || '20'),
     maxPrice: parseFloat(process.env.MAX_PRICE || '2000'),
   },
-  discord: {
-    webhookUrl: process.env.DISCORD_WEBHOOK_URL,
+  email: {
+    host: process.env.SMTP_HOST,
+    port: parseInt(process.env.SMTP_PORT || '587', 10),
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+    from: process.env.EMAIL_FROM,
+    to: process.env.EMAIL_TO,
   },
   deals: {
     minProfitThreshold: parseFloat(process.env.MIN_PROFIT_THRESHOLD || '20'),
@@ -82,10 +87,6 @@ minDealScore: parseInt(process.env.MIN_DEAL_SCORE || '70', 10),
     },
     propertyRoom: {
       enabled: process.env.PROPERTYROOM_ENABLED !== 'false',
-      delayMs: 3000,
-    },
-    heritage: {
-      enabled: process.env.HERITAGE_ENABLED !== 'false',
       delayMs: 3000,
     },
     bidSpotter: {
